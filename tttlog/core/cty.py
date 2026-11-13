@@ -64,6 +64,11 @@ class CtyDat:
                         self.prefixes[bare.upper()] = (entity, cq)
                 buf = ""
 
+    def entities(self) -> list[Entity]:
+        """Every DXCC entity in the file, sorted by primary prefix."""
+        seen = {e.name: e for e, _ in list(self.prefixes.values()) + list(self.exact.values())}
+        return sorted(seen.values(), key=lambda e: (e.prefix, e.name))
+
     @staticmethod
     def _effective(call: str) -> str:
         call = call.upper().strip()

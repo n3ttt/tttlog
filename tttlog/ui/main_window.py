@@ -2,25 +2,32 @@
 from __future__ import annotations
 
 import re
+from datetime import timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QDockWidget, QFileDialog, QGridLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QMainWindow, QMessageBox, QPushButton,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import config
 from ..contests.engine import ContestEngine, load_rules
+from ..core.cluster import parse_spot
 from ..core.cty import DATA_DIR, CtyDat
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
 from ..export.adif import export_adif, import_adif
 from ..export.cabrillo import export_cabrillo
-from .dialogs import EditQsoDialog, MacroDialog, NewLogDialog, StationDialog
+from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
+from .dialogs import ClusterDialog, EditQsoDialog, MacroDialog, NewLogDialog, StationDialog
+from .docks import Pane
+from .needed_pane import NeededPane
+from .rate_pane import RatePane
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
+LAYOUT_VERSION = "3"     # bump when panes are added/renamed so old saved layouts are dropped
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 
 STYLE = """
@@ -41,6 +48,8 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("N3TTT", "tttlog")
         self.station = config.load_station()
         self.macros = config.load_macros()
+        self.cluster_cfg = config.load_cluster()
+        self.colors = config.load_colors()
         self.cty_missing = not (DATA_DIR / "cty.dat").exists()
         self.cty = CtyDat(FIXTURE_CTY if self.cty_missing else None)
         self.log: Log | None = None
@@ -59,10 +68,23 @@ class MainWindow(QMainWindow):
         geo = self.settings.value("geometry")
         if geo:
             self.restoreGeometry(geo)
+        elif self.screen() is not None:              # first run: use most of the screen
+            avail = self.screen().availableGeometry()
+            self.resize(int(avail.width() * 0.92), int(avail.height() * 0.9))
         st = self.settings.value("window_state")
+        if str(self.settings.value("layout_version", "")) != LAYOUT_VERSION:
+            st = None                                # panes changed: start from the default layout
         if st:
             self.restoreState(st)
+        else:
+            # Qt leaves a stray tab bar if two tab groups are made before the window
+            # is first shown, so build the default tabs right after it appears.
+            QTimer.singleShot(0, self._default_tabs)
+        for d in self.panes:                       # popped-out panes get real window buttons
+            if d.isFloating():
+                d._on_top_level(True)
 
+        self._ticks = 0
         self.clock = QTimer(self, interval=1000, timeout=self._tick)
         self.clock.start()
 
@@ -71,6 +93,9 @@ class MainWindow(QMainWindow):
             self.open_log(Path(last))
         if self.cty_missing:
             self.banner("cty.dat missing: run  python scripts/update_cty.py  (using small test file)", "orange")
+        self._refresh_rates()
+        if self.cluster_cfg.get("auto_connect"):
+            self.cluster_connect(True)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -86,7 +111,8 @@ class MainWindow(QMainWindow):
         v.addLayout(top)
 
         ent = QGridLayout()
-        self.call = QLineEdit(placeholderText="CALL  (or type freq + Enter)")
+        self.call = QLineEdit(placeholderText="CALL or kHz")
+        self.call.setToolTip("Type a call, or a frequency in kHz + Enter to QSY")
         self.rst = QLineEdit("59"); self.rst.setMaximumWidth(70)
         self.exch = QLineEdit(placeholderText="EXCH")
         self.sent_lbl = QLabel()
@@ -117,8 +143,14 @@ class MainWindow(QMainWindow):
         v.addLayout(fk)
         self.tx_lbl = QLabel()
         v.addWidget(self.tx_lbl)
-        v.addStretch()
-        self.setCentralWidget(w)
+        # The entry line is a pane too, sized to its contents. There is no central
+        # widget, so every other pane can use the space below and beside it.
+        v.setContentsMargins(8, 4, 8, 4)
+        v.setSpacing(4)
+        w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
+        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
+        self._dock("Entry", w, Qt.TopDockWidgetArea, closable=False)
 
         # Log pane
         self.log_table = QTableWidget(0, 8)
@@ -145,9 +177,32 @@ class MainWindow(QMainWindow):
                                                       self._on_call_edited(it.text())))
         self._dock("Check Partial", self.partials, Qt.RightDockWidgetArea)
 
-    def _dock(self, title, widget, area):
-        d = QDockWidget(title, self, objectName=f"dock_{title}")
-        d.setWidget(widget)
+        # Rate pane
+        self.rate_pane = RatePane()
+        self._dock("Rate", self.rate_pane, Qt.RightDockWidgetArea)
+
+        # DX cluster: telnet client, Spots window (mults / Qs), Telnet window (raw text)
+        self.cluster = ClusterClient(self)
+        self.spots_pane = SpotsPane(self.colors)
+        self.spots_pane.spots.max_age = timedelta(minutes=int(self.cluster_cfg.get("max_age_min", 30)))
+        self.telnet_pane = TelnetPane()
+        self.cluster.line.connect(self._on_cluster_line)
+        self.cluster.state.connect(self._on_cluster_state)
+        self.telnet_pane.connectRequested.connect(self.cluster_connect)
+        self.telnet_pane.cmd.returnPressed.connect(self._cluster_cmd)
+        self.spots_pane.spotActivated.connect(self.go_to_spot)
+        self.spots_pane.colorsChanged.connect(self._save_colors)
+        self._dock("Spots", self.spots_pane, Qt.BottomDockWidgetArea)
+        self._dock("Telnet", self.telnet_pane, Qt.BottomDockWidgetArea)
+
+        # Needed window: every mult x band, colored by need / spotted
+        self.needed_pane = NeededPane(self.colors)
+        self.needed_pane.spotActivated.connect(self.go_to_spot)
+        self.needed_pane.colorsChanged.connect(self._save_colors)
+        self._dock("Needed", self.needed_pane, Qt.RightDockWidgetArea)
+
+    def _dock(self, title, widget, area, closable=True):
+        d = Pane(title, widget, self, closable=closable)
         self.addDockWidget(area, d)
         setattr(self, f"dock_{title.replace(' ', '_').lower()}", d)
         return d
@@ -178,15 +233,41 @@ class MainWindow(QMainWindow):
         cfg = mb.addMenu("&Config")
         cfg.addAction(QAction("Station profile…", self, triggered=self.edit_station))
         cfg.addAction(QAction("Function-key macros…", self, triggered=self.edit_macros))
+        cfg.addAction(QAction("DX cluster…", self, triggered=self.edit_cluster))
+        cl = mb.addMenu("C&luster")
+        cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
+                             triggered=lambda: self.cluster_connect(not self.cluster._want)))
+        cl.addAction(QAction("Show needed (mults + Qs)", self, shortcut="Ctrl+Shift+N",
+                             triggered=lambda: self.spots_pane.show_only("spot_mult", "spot_q")))
+        cl.addAction(QAction("Show mults only", self, shortcut="Ctrl+Shift+M",
+                             triggered=lambda: self.spots_pane.show_only("spot_mult")))
+        cl.addAction(QAction("Show all spots", self, shortcut="Ctrl+Shift+A",
+                             triggered=lambda: self.spots_pane.show_only("spot_mult", "spot_q", "spot_dupe")))
+        cl.addAction(QAction("Go to newest needed spot", self, shortcut="Ctrl+G",
+                             triggered=self.go_to_next_needed))
+        cl.addAction(QAction("Search spots", self, shortcut="Ctrl+Shift+F",
+                             triggered=self._focus_spot_search))
         view = mb.addMenu("&View")
-        for d in (self.dock_log, self.dock_score, self.dock_check_partial):
+        for d in self.panes:
             view.addAction(d.toggleViewAction())
+        view.addSeparator()
+        view.addAction(QAction("Minimize all panes", self, shortcut="Ctrl+Shift+H",
+                               triggered=self.minimize_all_panes))
+        view.addAction(QAction("Restore all panes", self, shortcut="Ctrl+Shift+R",
+                               triggered=self.restore_all_panes))
+        view.addAction(QAction("Dock all pop-out windows", self, triggered=self.dock_all_panes))
 
     def _build_shortcuts(self):
         for i in range(12):
             QShortcut(QKeySequence(f"F{i + 1}"), self, activated=lambda n=i: self.fkey(n),
                       context=Qt.ApplicationShortcut)
         QShortcut(QKeySequence("Escape"), self, activated=self.wipe)
+        # When the Entry pane is popped out it's a separate window, so it needs its
+        # own Escape (enabled only then, or the two would clash).
+        esc = QShortcut(QKeySequence("Escape"), self.dock_entry, activated=self.wipe,
+                        context=Qt.WidgetWithChildrenShortcut)
+        esc.setEnabled(False)
+        self.dock_entry.topLevelChanged.connect(esc.setEnabled)
 
     def eventFilter(self, obj, ev):
         # Space in call field jumps to exchange (N1MM style)
@@ -203,7 +284,16 @@ class MainWindow(QMainWindow):
         self.banner_lbl.setStyleSheet(f"background:{color}; color:{'black' if color else ''};")
 
     def _tick(self):
-        self.clock_lbl.setText(utc_now().strftime("%H:%M:%S Z  %Y-%m-%d"))
+        now = utc_now()
+        self.clock_lbl.setText(now.strftime("%H:%M:%S Z  %Y-%m-%d"))
+        self._ticks += 1
+        if self._ticks % 15 == 0:                 # rolling rates + spot ageing
+            self._refresh_rates(now)
+            if self.spots_pane.prune(now):
+                self._refresh_needed()
+
+    def _refresh_rates(self, now=None):
+        self.rate_pane.update_rates(self.qsos, self.engine, now or utc_now())
 
     def _refresh_radio(self):
         band = band_from_khz(self.freq_khz) or "?"
@@ -216,6 +306,9 @@ class MainWindow(QMainWindow):
         if self.engine:
             self.sent_lbl.setText(f"Sent: {self.engine.default_rst()} {self.engine.sent_exchange()}")
         self.settings.setValue("freq_khz", self.freq_khz)
+        if hasattr(self, "spots_pane") and self.spots_pane.current_band != band:
+            self.spots_pane.current_band = band
+            self.spots_pane.refresh()
 
     def _load_scp(self) -> list[str]:
         p = DATA_DIR / "MASTER.SCP"
@@ -256,6 +349,7 @@ class MainWindow(QMainWindow):
         self.exch.setPlaceholderText(" ".join(f.get("label", f["name"]).upper()
                                               for f in self.engine.rcvd_fields))
         self.qsos = self.engine.rescore(self.log.all())
+        self.needed_pane.set_engine(self.engine)
         self.settings.setValue("last_log", str(path))
         self.setWindowTitle(f"tttlog — {rules['name']} — {path.name}")
         self._refresh_radio()
@@ -414,6 +508,9 @@ class MainWindow(QMainWindow):
             for c, v in enumerate(["Total", s.qsos, s.points, s.mults]):
                 it = QTableWidgetItem(str(v)); f = QFont(); f.setBold(True); it.setFont(f)
                 st.setItem(len(s.by_band), c, it)
+        self._refresh_rates()
+        self.spots_pane.reevaluate(self.engine, self.qsos)
+        self._refresh_needed()
 
     def _selected_qso(self) -> QSO | None:
         rows = self.log_table.selectionModel().selectedRows()
@@ -458,6 +555,7 @@ class MainWindow(QMainWindow):
             config.save_station(self.station)
             if self.engine:
                 self.engine = ContestEngine(self.engine.rules, self.cty, self.station)
+                self.needed_pane.set_engine(self.engine)
                 self.qsos = self.engine.rescore(self.qsos)
                 self._refresh_log()
             self._refresh_radio()
@@ -506,10 +604,116 @@ class MainWindow(QMainWindow):
             self.log.add(q)
         self._rescore_and_persist(self.log.all())
 
+    # ---------------------------------------------------------- DX cluster
+    def cluster_connect(self, on: bool):
+        if not on:
+            self.cluster.disconnect_from()
+            return
+        cfg = self.cluster_cfg
+        login = cfg.get("login") or self.station.call
+        if not cfg.get("host") or login in ("", "N0CALL"):
+            self.banner("Set your call (Config ▸ Station profile) and cluster host (Config ▸ DX cluster)",
+                        "#ffd166")
+            return
+        self.cluster.connect_to(cfg["host"], cfg.get("port", 7373), login, cfg.get("init_commands"))
+
+    def _on_cluster_state(self, text: str):
+        self.telnet_pane.set_connected(self.cluster._want, text)
+        self.spots_pane.summary_lbl.setToolTip(text)
+
+    def _on_cluster_line(self, text: str):
+        self.telnet_pane.append_console(text)
+        s = parse_spot(text, utc_now())
+        if s:
+            self.spots_pane.add_spot(s, self.engine, self.qsos)
+            self._refresh_needed()
+
+    def _cluster_cmd(self):
+        cmd = self.telnet_pane.cmd.text().strip()
+        if cmd:
+            self.cluster.send(cmd)
+            self.telnet_pane.append_console(f"> {cmd}")
+        self.telnet_pane.cmd.clear()
+
+    def go_to_spot(self, s):
+        """QSY to a spot and put the call in the entry line (S&P)."""
+        if self.engine and s.mode in self.engine.rules.get("modes", []) and s.mode != self.mode:
+            self.mode = s.mode
+        self.run_mode = False
+        self.set_freq(s.freq_khz)
+        self.wipe()
+        self.call.setText(s.call)
+        self._on_call_edited(s.call)
+
+    def go_to_next_needed(self):
+        """Jump to the newest mult spot, or the newest needed Q if no mults."""
+        spots = [s for s in self.spots_pane.spots.spots()
+                 if not (self.spots_pane.band_box.currentIndex() == 1
+                         and s.band != self.spots_pane.current_band)]
+        pick = next((s for s in spots if s.status == "MULT"), None) or \
+            next((s for s in spots if s.status == "Q"), None)
+        if pick:
+            self.go_to_spot(pick)
+        else:
+            self.banner("No needed spots in the current filter")
+
+    def _focus_spot_search(self):
+        self.dock_spots.show(); self.dock_spots.raise_()
+        self.dock_spots.set_minimized(False)
+        self.spots_pane.search.setFocus(); self.spots_pane.search.selectAll()
+
+    def edit_cluster(self):
+        dlg = ClusterDialog(self.cluster_cfg, self.station.call, self)
+        if dlg.exec():
+            self.cluster_cfg = dlg.values()
+            config.save_cluster(self.cluster_cfg)
+            self.spots_pane.spots.max_age = timedelta(minutes=int(self.cluster_cfg["max_age_min"]))
+            if self.cluster._want:                  # reconnect with the new settings
+                self.cluster_connect(True)
+
+    def _refresh_needed(self):
+        self.needed_pane.update_data(self.qsos, self.spots_pane.spots.spots())
+
+    def _save_colors(self):
+        config.save_colors(self.colors)
+
+    # ---------------------------------------------------------- panes
+    @property
+    def panes(self) -> list[Pane]:
+        return [w for w in self.findChildren(Pane)]
+
+    def _default_tabs(self):
+        self.tabifyDockWidget(self.dock_spots, self.dock_telnet)
+        self.tabifyDockWidget(self.dock_rate, self.dock_needed)
+        self.dock_spots.raise_()
+        self.dock_rate.raise_()
+        right = [self.dock_score, self.dock_check_partial, self.dock_rate]
+        self.resizeDocks(right, [max(420, self.width() * 9 // 25)] * 3, Qt.Horizontal)
+        self.resizeDocks(right, [215, 120, max(300, self.height() - 335)], Qt.Vertical)
+        self.resizeDocks([self.dock_log, self.dock_spots], [2, 3], Qt.Horizontal)
+
+    def minimize_all_panes(self):
+        for d in self.panes:
+            if d.isVisible():
+                d.set_minimized(True)
+
+    def restore_all_panes(self):
+        for d in self.panes:
+            if d.isFloating() and d.isMinimized():
+                d.showNormal()
+            d.set_minimized(False)
+
+    def dock_all_panes(self):
+        for d in self.panes:
+            if d.isFloating():
+                d.setFloating(False)
+
     # ---------------------------------------------------------- close
     def closeEvent(self, ev):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("window_state", self.saveState())
+        self.settings.setValue("layout_version", LAYOUT_VERSION)
+        self.cluster.disconnect_from()
         if self.log:
             self.log.close()
         super().closeEvent(ev)

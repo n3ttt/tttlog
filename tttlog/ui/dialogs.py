@@ -5,7 +5,7 @@ import copy
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
                                QFormLayout, QHBoxLayout, QLineEdit, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QDoubleSpinBox, QHeaderView)
@@ -19,6 +19,37 @@ def _buttons(dlg):
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     return bb
+
+
+class ClusterDialog(QDialog):
+    def __init__(self, cfg: dict, station_call: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("DX cluster")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.host = QLineEdit(str(cfg.get("host", "")))
+        self.port = QSpinBox(); self.port.setRange(1, 65535); self.port.setValue(int(cfg.get("port", 7373)))
+        self.login = QLineEdit(str(cfg.get("login", "")))
+        self.login.setPlaceholderText(f"{station_call}  (station call)")
+        self.age = QSpinBox(); self.age.setRange(5, 240); self.age.setSuffix(" min")
+        self.age.setValue(int(cfg.get("max_age_min", 30)))
+        self.auto = QCheckBox("Connect when tttlog starts")
+        self.auto.setChecked(bool(cfg.get("auto_connect", False)))
+        self.init = QLineEdit("; ".join(cfg.get("init_commands", [])))
+        self.init.setPlaceholderText("e.g.  set/skimmer; sh/dx 30")
+        for lbl, w in [("Host", self.host), ("Port", self.port), ("Login call", self.login),
+                       ("Keep spots for", self.age), ("", self.auto),
+                       ("Commands after login", self.init)]:
+            f.addRow(lbl, w)
+        f.addRow(_buttons(self))
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(host=self.host.text().strip(), port=self.port.value(),
+                   login=self.login.text().strip().upper(), max_age_min=self.age.value(),
+                   auto_connect=self.auto.isChecked(),
+                   init_commands=[c.strip() for c in self.init.text().split(";") if c.strip()])
+        return out
 
 
 class StationDialog(QDialog):
