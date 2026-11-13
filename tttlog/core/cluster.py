@@ -35,27 +35,41 @@ PHONE_START = {"160m": 1840, "80m": 3600, "60m": 0, "40m": 7125, "20m": 14150,
 DIGI_WORDS = ("FT8", "FT4", "RTTY", "PSK", "JT65", "JS8")
 
 
-def strip_telnet(data: bytes) -> bytes:
-    """Remove telnet IAC negotiation sequences from a chunk of bytes."""
+def split_telnet(data: bytes) -> tuple[bytes, bytes]:
+    """Remove telnet IAC sequences; return (clean bytes, incomplete tail).
+
+    TCP can split a negotiation sequence across reads, so an unfinished one at
+    the end is handed back to be prefixed to the next read instead of leaking
+    control bytes into the text.
+    """
     out = bytearray()
     i, n = 0, len(data)
     while i < n:
         b = data[i]
         if b != IAC:
             out.append(b); i += 1; continue
-        if i + 1 >= n:                       # dangling IAC at end of chunk
-            break
+        if i + 1 >= n:                       # lone IAC: wait for the command byte
+            return bytes(out), data[i:]
         cmd = data[i + 1]
         if cmd == IAC:                       # escaped 255
             out.append(IAC); i += 2
         elif cmd in (251, 252, 253, 254):    # WILL/WONT/DO/DONT <opt>
+            if i + 2 >= n:                   # option byte not here yet
+                return bytes(out), data[i:]
             i += 3
         elif cmd == 250:                     # SB ... IAC SE
             end = data.find(bytes([IAC, 240]), i + 2)
-            i = n if end < 0 else end + 2
+            if end < 0:                      # subnegotiation not finished yet
+                return bytes(out), data[i:]
+            i = end + 2
         else:
             i += 2
-    return bytes(out)
+    return bytes(out), b""
+
+
+def strip_telnet(data: bytes) -> bytes:
+    """Remove telnet IAC sequences from a complete chunk of bytes."""
+    return split_telnet(data)[0]
 
 
 def guess_mode(khz: float, comment: str = "") -> str:

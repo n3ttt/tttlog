@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeade
                                QLabel, QLineEdit, QPlainTextEdit, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
-from ..core.cluster import LOGIN_RE, Spot, SpotList, strip_telnet
+from ..core.cluster import LOGIN_RE, Spot, SpotList, split_telnet
 from .widgets import StateToggle, text_color_for
 
 RECONNECT_MS = 30_000
@@ -38,6 +38,8 @@ class ClusterClient(QObject):
         self.sock.disconnected.connect(self._on_disconnected)
         self.sock.errorOccurred.connect(self._on_error)
         self._buf = b""
+        self._raw_tail = b""          # unfinished telnet sequence carried to the next read
+        self._redialing = False       # our own abort() while reconnecting: don't schedule a retry
         self._want = False            # user wants to be connected (drives auto-reconnect)
         self._logged_in = False
         self.host, self.port, self.login, self.init_commands = "", 0, "", []
@@ -67,26 +69,35 @@ class ClusterClient(QObject):
     def _dial(self):
         if not self._want:
             return
-        self._buf, self._logged_in = b"", False
-        self.sock.abort()
+        self._retry.stop()
+        self._buf, self._raw_tail, self._logged_in = b"", b"", False
+        self._redialing = True
+        try:
+            self.sock.abort()
+        finally:
+            self._redialing = False
         self.state.emit(f"Connecting to {self.host}:{self.port}…")
         self.sock.connectToHost(self.host, self.port)
 
     def _on_connected(self):
+        self._retry.stop()
         self.state.emit(f"Connected to {self.host}")
 
     def _on_disconnected(self):
-        if self._want:
+        if self._want and not self._redialing:
             self.state.emit(f"Lost connection, retrying in {RECONNECT_MS // 1000}s")
             self._retry.start()
 
     def _on_error(self, _err):
-        if self._want:
+        if self._want and not self._redialing:
             self.state.emit(f"{self.sock.errorString()}, retrying in {RECONNECT_MS // 1000}s")
             self._retry.start()
 
     def _read(self):
-        self._buf += strip_telnet(bytes(self.sock.readAll()))
+        clean, self._raw_tail = split_telnet(self._raw_tail + bytes(self.sock.readAll()))
+        if len(self._raw_tail) > 4096:           # unterminated subnegotiation: give up on it
+            self._raw_tail = b""
+        self._buf += clean
         *lines, self._buf = self._buf.replace(b"\r", b"").split(b"\n")
         for raw in lines:
             text = raw.decode("latin-1").rstrip()
@@ -191,11 +202,18 @@ class SpotsPane(QWidget):
         v.addWidget(self.table, 1)
 
         self._shown: list[Spot] = []
+        self.refreshes = 0
         self._dirty = QTimer(self, singleShot=True, interval=250, timeout=self.refresh)
 
     def _on_toggle(self):
         self.refresh()
         self.colorsChanged.emit()
+
+    def _schedule_refresh(self):
+        # Throttle, don't debounce: restarting the timer on every spot would
+        # starve the table during a busy cluster.
+        if not self._dirty.isActive():
+            self._dirty.start()
 
     def sync_colors(self):
         for t in self.toggles.values():
@@ -214,18 +232,18 @@ class SpotsPane(QWidget):
         self.spots.add(s)
         if engine:
             self.spots.evaluate(engine, log, only=[s])
-        self._dirty.start()
+        self._schedule_refresh()
 
     def reevaluate(self, engine, log):
         if engine:
             self.spots.evaluate(engine, log)
-        self._dirty.start()
+        self._schedule_refresh()
 
     def prune(self, now: datetime) -> bool:
         before = len(self.spots)
         self.spots.prune(now)
         if len(self.spots) != before:
-            self._dirty.start()
+            self._schedule_refresh()
             return True
         return False
 
@@ -246,6 +264,7 @@ class SpotsPane(QWidget):
         return out
 
     def refresh(self):
+        self.refreshes += 1
         shown = self.visible_spots()
         self._shown = shown
         t = self.table

@@ -63,6 +63,7 @@ class NeededPane(QWidget):
         self.table.cellDoubleClicked.connect(self._activate)
         self.table.setFocusPolicy(Qt.ClickFocus)
         v.addWidget(self.table, 1)
+        self.refreshes = 0
         self._dirty = QTimer(self, singleShot=True, interval=300, timeout=self.refresh)
 
     # -- data in ----------------------------------------------------------
@@ -78,7 +79,8 @@ class NeededPane(QWidget):
 
     def update_data(self, qsos, spots):
         self._qsos, self._spots = qsos, spots
-        self._dirty.start()
+        if not self._dirty.isActive():          # throttle (see SpotsPane._schedule_refresh)
+            self._dirty.start()
 
     def sync_colors(self):
         for t in self.toggles.values():
@@ -91,6 +93,7 @@ class NeededPane(QWidget):
 
     # -- view ---------------------------------------------------------------
     def refresh(self):
+        self.refreshes += 1
         t = self.table
         if not self.engine or self.mult_box.currentIndex() < 0:
             t.setRowCount(0); self.summary_lbl.setText("Open a log to see what's needed")
