@@ -467,6 +467,10 @@ class MainWindow(QMainWindow):
         m = page[n]
         if "{CLEAR}" in m.get("text", ""):
             self.wipe(); self.tx_lbl.setText(""); return
+        if "{SPOT}" in m.get("text", ""):
+            if self.spot_last_qso():
+                self.tx_lbl.setText(f"F{n + 1}: spotted last QSO to the cluster")
+            return
         exch = self.engine.sent_exchange() if self.engine else ""
         txt = config.expand(m.get("text", ""), self.station, self.call.text().strip().upper(),
                             exch, self.engine.default_rst() if self.engine else "59")
@@ -657,12 +661,12 @@ class MainWindow(QMainWindow):
         self.banner(f"{keep}Spotted {q.call} on {q.freq_khz:.1f}" + (" (auto)" if auto else ""))
         return True
 
-    def spot_last_qso(self):
+    def spot_last_qso(self) -> bool:
         if not self.qsos:
             self.banner("No QSOs logged yet", "#ffd166")
-            return
+            return False
         last = max(self.qsos, key=lambda x: (x.time_utc, x.id or 0))
-        self.spot_qso(last)
+        return self.spot_qso(last)
 
     def _set_auto_spot(self, on: bool):
         self.cluster_cfg["auto_spot_sp"] = bool(on)

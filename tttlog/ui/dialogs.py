@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLineEdit, QPushButton,
+                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QDoubleSpinBox, QHeaderView)
 
@@ -137,6 +137,10 @@ class MacroDialog(QDialog):
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         v.addWidget(self.table)
+        hint = QLabel("Text fields: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are filled in.  "
+                      "Actions: {CLEAR} wipes the entry line, {SPOT} spots the last QSO to the cluster.")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
         v.addWidget(_buttons(self))
         self._cur = None
         self.mode.currentIndexChanged.connect(self._switch)
