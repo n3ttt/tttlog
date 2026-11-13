@@ -228,6 +228,19 @@ def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
     assert w.dock_log.geometry().top() >= e.geometry().bottom()
     assert w.dock_log.height() > 600                       # the space went to the panes
     assert w.call.height() >= w.call.sizeHint().height()   # entry fields not squashed
+
+    # Typing must not resize panes (Windows alpha bug: the right column grew by a
+    # splitter width on every keystroke, squeezing Log and Spots).
+    w.scp = [f"DL{i}A" for i in range(500)]
+    names = ("entry", "log", "spots", "score", "check_partial", "rate")
+    before = {n: getattr(w, "dock_" + n).geometry() for n in names}
+    for t in ["D", "DL", "DL1", "DL1A", "W", "W1", "W1AW"] * 3:
+        w.call.setText(t); w._on_call_edited(t)
+        for _ in range(5):
+            app.processEvents()
+    after = {n: getattr(w, "dock_" + n).geometry() for n in names}
+    assert after == before, {n: (before[n].getRect(), after[n].getRect()) for n in names if before[n] != after[n]}
+    assert w.dock_log.width() > 200 and w.dock_spots.width() > 300
     w.close()
 
 

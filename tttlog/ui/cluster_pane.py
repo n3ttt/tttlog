@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtNetwork import QAbstractSocket, QTcpSocket
 from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+                               QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from ..core.cluster import LOGIN_RE, Spot, SpotList, split_telnet
@@ -177,24 +177,28 @@ class SpotsPane(QWidget):
             t.changed.connect(self._on_toggle)
             bar.addWidget(t)
         bar.addStretch()
+        v.addLayout(bar)
+
+        # second row: actions + filters, so the pane can stay narrow
+        bar2 = QHBoxLayout()
         self.spot_btn = QPushButton("Spot last QSO")
         self.spot_btn.setToolTip("Send the last QSO's call and frequency to the cluster")
         self.spot_btn.setFocusPolicy(Qt.NoFocus)
         self.spot_btn.clicked.connect(self.spotLastRequested)
-        bar.addWidget(self.spot_btn)
         self.band_box = QComboBox(); self.band_box.addItems(["All bands", "Current band"])
         self.band_box.setFocusPolicy(Qt.NoFocus)
         self.band_box.currentIndexChanged.connect(self.refresh)
-        bar.addWidget(self.band_box)
-        v.addLayout(bar)
-
-        bar2 = QHBoxLayout()
-        self.search = QLineEdit(placeholderText="Search call / country / comment")
+        self.search = QLineEdit(placeholderText="Search")
+        self.search.setToolTip("Search call / country / comment")
         self.search.setStyleSheet("font: 11pt;")
+        self.search.setMinimumWidth(80)
         self.search.textChanged.connect(self.refresh)
-        self.summary_lbl = QLabel()
-        bar2.addWidget(self.search, 1); bar2.addWidget(self.summary_lbl)
+        bar2.addWidget(self.spot_btn); bar2.addWidget(self.band_box); bar2.addWidget(self.search, 1)
         v.addLayout(bar2)
+
+        self.summary_lbl = QLabel()
+        self.summary_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)   # never widens the pane
+        v.addWidget(self.summary_lbl)
 
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(["Time", "kHz", "Call", "Country", "Need", "Spotter", "Comment"])
