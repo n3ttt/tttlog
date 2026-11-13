@@ -1,0 +1,25 @@
+# CQ World Wide DX Contest - SSB
+# Last full weekend of October, 0000Z Sat - 2359Z Sun.
+id: CQ-WW-SSB
+name: CQ World Wide DX Contest - SSB
+cabrillo_contest: CQ-WW-SSB
+modes: [SSB]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 48
+
+dupe: per_band
+
+exchange:
+  sent:
+    - {name: rst, default: "59"}
+    - {name: cq_zone, label: "ZONE", from_station: cq_zone}
+  rcvd:
+    - {name: rst, default: "59"}
+    - {name: cq_zone, label: "ZONE", pattern: '^([1-9]|[1-3][0-9]|40)$', prefill: cq_zone}
+
+# 0 pts same country, 1 pt same continent (2 if both in NA), 3 pts other continent
+points: {type: cqww}
+
+mults:
+  - {type: cq_zone, scope: per_band, label: "Zones"}
+  - {type: dxcc, scope: per_band, label: "Countries"}

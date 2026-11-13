@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tttlog"
+version = "0.1.0"
+description = "Cross-platform, one-window amateur radio contest logger"
+readme = "README.md"
+license = {text = "GPL-3.0-or-later"}
+authors = [{name = "N3TTT"}]
+requires-python = ">=3.11"
+dependencies = ["PySide6>=6.6", "PyYAML>=6.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+tttlog = "tttlog.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["tttlog*"]
+
+[tool.setuptools.package-data]
+"tttlog.contests" = ["rules/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

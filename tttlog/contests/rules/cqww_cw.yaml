@@ -1,0 +1,24 @@
+# CQ World Wide DX Contest - CW
+# Last full weekend of November, 0000Z Sat - 2359Z Sun.
+id: CQ-WW-CW
+name: CQ World Wide DX Contest - CW
+cabrillo_contest: CQ-WW-CW
+modes: [CW]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 48
+
+dupe: per_band
+
+exchange:
+  sent:
+    - {name: rst, default: "599"}
+    - {name: cq_zone, label: "ZONE", from_station: cq_zone}
+  rcvd:
+    - {name: rst, default: "599"}
+    - {name: cq_zone, label: "ZONE", pattern: '^([1-9]|[1-3][0-9]|40)$', prefill: cq_zone}
+
+points: {type: cqww}
+
+mults:
+  - {type: cq_zone, scope: per_band, label: "Zones"}
+  - {type: dxcc, scope: per_band, label: "Countries"}
