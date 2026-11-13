@@ -1,0 +1,27 @@
+# ARRL International DX Contest - Phone (W/VE perspective)
+# First full weekend in March, 0000Z Sat - 2359Z Sun.
+id: ARRL-DX-SSB
+name: ARRL International DX Contest - Phone
+cabrillo_contest: ARRL-DX-SSB
+modes: [SSB]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 48
+
+dupe: per_band            # per_band | per_band_mode | once
+
+exchange:
+  sent:                   # what we send (filled from station profile)
+    - {name: rst, default: "59"}
+    - {name: state, label: "ST/PROV", from_station: state}
+  rcvd:                   # what we copy
+    - {name: rst, default: "59"}
+    - {name: power, label: "PWR", pattern: '^(\d{1,4}|K{1,2}W?|\d+K)$'}
+
+# W/VE stations work DX only (48 states + VE are not DX; KH6/KL7 ARE DX)
+valid_qso:
+  exclude_entities: ["United States", "Canada"]
+
+points: {type: fixed, value: 3}
+
+mults:
+  - {type: dxcc, scope: per_band, label: "DXCC"}

@@ -1,0 +1,19 @@
+Canada:                   05:  09:  NA:   44.35:    78.75:     5.0:  VE:
+    CF,CG,CJ,CK,CY,CZ,VA,VB,VC,VD,VE,VF,VG,VO,VX,VY,XJ,XK,XL,XM,XN,XO;
+Hawaii:                   31:  61:  OC:   21.12:   157.48:    10.0:  KH6:
+    AH6,AH7,KH6,KH7,NH6,NH7,WH6,WH7;
+Alaska:                   01:  01:  NA:   61.40:   148.87:     8.0:  KL:
+    AL,KL,NL,WL;
+Fed. Rep. of Germany:     14:  28:  EU:   51.00:   -10.00:    -1.0:  DL:
+    DA,DB,DC,DD,DE,DF,DG,DH,DI,DJ,DK,DL,DM,DN,DO,DP,DQ,DR;
+England:                  14:  27:  EU:   52.77:     1.47:     0.0:  G:
+    2E,G,M;
+Japan:                    25:  45:  AS:   36.40:  -138.38:    -9.0:  JA:
+    7J,7K,7L,7M,7N,8J,8K,8L,8M,8N,JA,JE,JF,JG,JH,JI,JJ,JK,JL,JM,JN,JO,JP,JQ,JR,JS;
+Brazil:                   11:  15:  SA:  -10.00:    53.00:     3.0:  PY:
+    PP,PQ,PR,PS,PT,PU,PV,PW,PX,PY,ZV,ZW,ZX,ZY,ZZ;
+Mexico:                   06:  10:  NA:   21.32:   100.23:     6.0:  XE:
+    4A,4B,4C,6D,6E,6F,6G,6H,6I,6J,XA,XB,XC,XD,XE,XF,XG,XH,XI;
+United States:            05:  08:  NA:   37.53:    91.67:     5.0:  K:
+    AA,AB,AC,AD,AE,AF,AG,AI,AJ,AK,K,N,W,
+    =W6XYZ(3)[6],=K7ABC(3)[6];
