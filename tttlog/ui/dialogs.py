@@ -35,10 +35,12 @@ class ClusterDialog(QDialog):
         self.age.setValue(int(cfg.get("max_age_min", 30)))
         self.auto = QCheckBox("Connect when tttlog starts")
         self.auto.setChecked(bool(cfg.get("auto_connect", False)))
+        self.auto_spot = QCheckBox("Auto-spot QSOs made in S&&P (call + frequency)")
+        self.auto_spot.setChecked(bool(cfg.get("auto_spot_sp", False)))
         self.init = QLineEdit("; ".join(cfg.get("init_commands", [])))
         self.init.setPlaceholderText("e.g.  set/skimmer; sh/dx 30")
         for lbl, w in [("Host", self.host), ("Port", self.port), ("Login call", self.login),
-                       ("Keep spots for", self.age), ("", self.auto),
+                       ("Keep spots for", self.age), ("", self.auto), ("", self.auto_spot),
                        ("Commands after login", self.init)]:
             f.addRow(lbl, w)
         f.addRow(_buttons(self))
@@ -47,7 +49,7 @@ class ClusterDialog(QDialog):
         out = dict(self._cfg)
         out.update(host=self.host.text().strip(), port=self.port.value(),
                    login=self.login.text().strip().upper(), max_age_min=self.age.value(),
-                   auto_connect=self.auto.isChecked(),
+                   auto_connect=self.auto.isChecked(), auto_spot_sp=self.auto_spot.isChecked(),
                    init_commands=[c.strip() for c in self.init.text().split(";") if c.strip()])
         return out
 

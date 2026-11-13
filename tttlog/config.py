@@ -32,6 +32,7 @@ DEFAULT_CLUSTER = {
     "login": "",
     "max_age_min": 30,        # drop spots older than this
     "auto_connect": False,    # connect when tttlog starts
+    "auto_spot_sp": False,    # spot each new S&P QSO (call + frequency) to the cluster
     "init_commands": [],      # sent once after login, e.g. ["set/skimmer", "sh/dx 30"]
 }
 

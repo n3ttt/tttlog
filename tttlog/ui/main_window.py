@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout,
 
 from .. import config
 from ..contests.engine import ContestEngine, load_rules
-from ..core.cluster import parse_spot
+from ..core.cluster import parse_spot, spot_command
 from ..core.cty import DATA_DIR, CtyDat
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
@@ -192,6 +192,8 @@ class MainWindow(QMainWindow):
         self.telnet_pane.cmd.returnPressed.connect(self._cluster_cmd)
         self.spots_pane.spotActivated.connect(self.go_to_spot)
         self.spots_pane.colorsChanged.connect(self._save_colors)
+        self.spots_pane.spotLastRequested.connect(self.spot_last_qso)
+        self._spotted: set[tuple] = set()          # (call, band) we've spotted this session
         self._dock("Spots", self.spots_pane, Qt.BottomDockWidgetArea)
         self._dock("Telnet", self.telnet_pane, Qt.BottomDockWidgetArea)
 
@@ -243,6 +245,13 @@ class MainWindow(QMainWindow):
                              triggered=lambda: self.spots_pane.show_only("spot_mult")))
         cl.addAction(QAction("Show all spots", self, shortcut="Ctrl+Shift+A",
                              triggered=lambda: self.spots_pane.show_only("spot_mult", "spot_q", "spot_dupe")))
+        cl.addAction(QAction("Spot last QSO", self, shortcut="Ctrl+Shift+S",
+                             triggered=self.spot_last_qso))
+        self.auto_spot_action = QAction("Auto-spot S&&P QSOs", self, checkable=True,
+                                        checked=bool(self.cluster_cfg.get("auto_spot_sp")),
+                                        toggled=self._set_auto_spot)
+        cl.addAction(self.auto_spot_action)
+        cl.addSeparator()
         cl.addAction(QAction("Go to newest needed spot", self, shortcut="Ctrl+G",
                              triggered=self.go_to_next_needed))
         cl.addAction(QAction("Search spots", self, shortcut="Ctrl+Shift+F",
@@ -439,6 +448,9 @@ class MainWindow(QMainWindow):
         self._refresh_log()
         self.wipe()
         self.banner(f"Logged {q.call}  {q.country}  +{q.points}" + ("  (DUPE)" if q.is_dupe else ""))
+        if (not self.run_mode and not q.is_dupe and self.cluster_cfg.get("auto_spot_sp")
+                and self.cluster.is_connected() and (q.call, q.band) not in self._spotted):
+            self.spot_qso(q, auto=True)
 
     def wipe(self):
         self.call.clear(); self.exch.clear()
@@ -628,6 +640,34 @@ class MainWindow(QMainWindow):
             self.spots_pane.add_spot(s, self.engine, self.qsos)
             self._refresh_needed()
 
+    def spot_qso(self, q: QSO, auto: bool = False) -> bool:
+        """Send call + frequency of q to the cluster."""
+        if not self.cluster.is_connected():
+            self.banner("Not connected to the DX cluster (Ctrl+K to connect)", "#ffd166")
+            return False
+        try:
+            cmd = spot_command(q.call, q.freq_khz)
+        except ValueError as e:
+            self.banner(f"Can't spot: {e}", "#ffd166")
+            return False
+        self.cluster.send(cmd)
+        self.telnet_pane.append_console(f"> {cmd}")
+        self._spotted.add((q.call, q.band))
+        keep = self.banner_lbl.text() + "  ·  " if auto else ""
+        self.banner(f"{keep}Spotted {q.call} on {q.freq_khz:.1f}" + (" (auto)" if auto else ""))
+        return True
+
+    def spot_last_qso(self):
+        if not self.qsos:
+            self.banner("No QSOs logged yet", "#ffd166")
+            return
+        last = max(self.qsos, key=lambda x: (x.time_utc, x.id or 0))
+        self.spot_qso(last)
+
+    def _set_auto_spot(self, on: bool):
+        self.cluster_cfg["auto_spot_sp"] = bool(on)
+        config.save_cluster(self.cluster_cfg)
+
     def _cluster_cmd(self):
         cmd = self.telnet_pane.cmd.text().strip()
         if cmd:
@@ -667,6 +707,7 @@ class MainWindow(QMainWindow):
         if dlg.exec():
             self.cluster_cfg = dlg.values()
             config.save_cluster(self.cluster_cfg)
+            self.auto_spot_action.setChecked(bool(self.cluster_cfg.get("auto_spot_sp")))
             self.spots_pane.spots.max_age = timedelta(minutes=int(self.cluster_cfg["max_age_min"]))
             if self.cluster._want:                  # reconnect with the new settings
                 self.cluster_connect(True)

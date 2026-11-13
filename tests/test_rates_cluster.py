@@ -171,3 +171,12 @@ def test_need_grid_cqww_zones():
     countries = next(m for m in needed.mult_defs(eng) if m["type"] == "dxcc")
     _, rows = needed.need_grid(eng, countries, log, [])
     assert any(r.value == "United States" for r in rows)              # own country counts in CQWW
+
+
+def test_spot_command():
+    from tttlog.core.cluster import spot_command
+    assert spot_command("dl1abc", 14250) == "DX 14250.0 DL1ABC"
+    assert spot_command("JA1AA", 7155.25, " loud ") == "DX 7155.2 JA1AA loud"
+    for bad in [("", 14250), ("DL1 ABC", 14250), ("DL1ABC", 13000)]:
+        with pytest.raises(ValueError):
+            spot_command(*bad)
