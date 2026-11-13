@@ -41,7 +41,7 @@ Optional: put a `MASTER.SCP` file in `data/` to get Super Check Partial suggesti
 | **Ctrl+D** | Delete the selected QSO |
 
 | **Ctrl+K** | Connect / disconnect the DX cluster |
-| **Ctrl+Shift+S** | Spot the last QSO (call + frequency) to the cluster |
+| **F11** / **Ctrl+Shift+S** | Spot the last QSO (call + frequency) to the cluster |
 | **Ctrl+G** | Go to the newest needed spot (mults first, then Qs) |
 | **Ctrl+Shift+N / M / A** | Spots filter: mults + Qs / mults only / everything |
 | **Ctrl+Shift+H / R** | Minimize (roll up) all panes / restore them |
@@ -86,7 +86,7 @@ Spots are re-checked after every QSO, edit, and delete, so a mult disappears fro
 The band filter (all bands / current band) and the search box narrow the list further. The status line shows how many mults and Qs are available right now.
 Double-clicking a spot jumps to it. (Rig control in M1 will also tune the radio.)
 
-**Spotting:** the **Spot last QSO** button (or Cluster ▸ Spot last QSO, Ctrl+Shift+S) sends `DX <kHz> <call>` for your most recent QSO, with no comment.
+**Spotting:** **F11 Spot** (on every F-key page), the **Spot last QSO** button, or Cluster ▸ Spot last QSO (Ctrl+Shift+S) sends `DX <kHz> <call>` for your most recent QSO, with no comment.
 Turn on **Cluster ▸ Auto-spot S&P QSOs** (also in Config ▸ DX cluster) to spot every new S&P QSO as you log it. Run QSOs, dupes, and stations you've already spotted on that band this session are skipped.
 Check your contest category before spotting: many contests don't allow spotting in some categories, and self-spotting is never allowed.
 
@@ -115,7 +115,7 @@ Included: `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`.
 
 Settings live in `~/.tttlog/`:
 - `station.yaml`: call, state, zones, club, and Cabrillo header info (Config ▸ Station profile)
-- `macros.yaml`: F-keys (Config ▸ Function-key macros)
+- `macros.yaml`: F-keys (Config ▸ Function-key macros). Besides the text fields, `{CLEAR}` wipes the entry line and `{SPOT}` spots the last QSO, so you can put Spot on any key.
 - `cluster.yaml`: DX cluster host, login, and options (Config ▸ DX cluster)
 - `colors.yaml`: colors and checkboxes for the Needed and Spots windows
 

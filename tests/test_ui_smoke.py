@@ -269,6 +269,16 @@ def test_spot_last_qso_and_auto_spot(app, tmp_path, monkeypatch):
     assert _pump(app, lambda: spots_sent() == ["DX 14250.0 DL1ABC"])
     assert "Spotted DL1ABC on 14250.0" in w.banner_lbl.text()
 
+    # F11 is "Spot" on every page by default (Run and S&P)
+    for run in (True, False):
+        w.run_mode = run; w._refresh_radio()
+        assert w.fbuttons[10].text() == "F11 Spot"
+    got.clear()
+    w.fkey(10)
+    assert _pump(app, lambda: spots_sent() == ["DX 14250.0 DL1ABC"])
+    assert "spotted last QSO" in w.tx_lbl.text()
+    got.clear(); got.append("DX 14250.0 DL1ABC\r\n")    # keep the earlier spot in the record
+
     log("JA1AA", 21300.0, run=False)                          # auto-spot is off
     _pump(app, lambda: False, 300)
     assert spots_sent() == ["DX 14250.0 DL1ABC"]

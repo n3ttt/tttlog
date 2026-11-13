@@ -37,6 +37,8 @@ DEFAULT_CLUSTER = {
 }
 
 # Macro text: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are substituted.
+# Action tokens: {CLEAR} wipes the entry line; {SPOT} spots the last QSO
+# (call + frequency) to the DX cluster.
 # SSB: text is shown + the WAV file (in ~/.tttlog/wav/<MYCALL>/) is played by
 # the voice keyer (milestone M1). CW: text is sent by the keyer.
 DEFAULT_MACROS = {
@@ -52,7 +54,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "Please repeat", "wav": "agn.wav"},
             {"key": "F9", "label": "Nr?", "text": "Your power?", "wav": "pwr.wav"},
             {"key": "F10", "label": "Spare", "text": "", "wav": ""},
-            {"key": "F11", "label": "Spare", "text": "", "wav": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}", "wav": ""},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}", "wav": ""},
         ],
         "SP": [
@@ -66,7 +68,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "Please repeat", "wav": "agn.wav"},
             {"key": "F9", "label": "Spare", "text": "", "wav": ""},
             {"key": "F10", "label": "Spare", "text": "", "wav": ""},
-            {"key": "F11", "label": "Spare", "text": "", "wav": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}", "wav": ""},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}", "wav": ""},
         ],
     },
@@ -82,7 +84,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "AGN"},
             {"key": "F9", "label": "Nr?", "text": "NR?"},
             {"key": "F10", "label": "Spare", "text": ""},
-            {"key": "F11", "label": "Spare", "text": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}"},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}"},
         ],
         "SP": [
@@ -96,7 +98,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "AGN"},
             {"key": "F9", "label": "Spare", "text": ""},
             {"key": "F10", "label": "Spare", "text": ""},
-            {"key": "F11", "label": "Spare", "text": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}"},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}"},
         ],
     },
