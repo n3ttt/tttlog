@@ -11,6 +11,29 @@ from .contests.engine import Station
 CONFIG_DIR = Path.home() / ".tttlog"
 STATION_FILE = CONFIG_DIR / "station.yaml"
 MACROS_FILE = CONFIG_DIR / "macros.yaml"
+CLUSTER_FILE = CONFIG_DIR / "cluster.yaml"
+COLORS_FILE = CONFIG_DIR / "colors.yaml"
+
+# Colors for the Needed window and the Spots window. "show" = the checkbox state.
+DEFAULT_COLORS = {
+    "needed_spotted": {"color": "#57cc99", "show": True},    # need it AND it's spotted now
+    "needed":         {"color": "#ffb4a2", "show": True},    # need it, nobody spotting it
+    "worked_spotted": {"color": "#bde0fe", "show": False},   # have it, but spotted again
+    "worked":         {"color": "#e9ecef", "show": False},   # have it
+    "spot_mult":      {"color": "#57cc99", "show": True},    # Spots window: new mult
+    "spot_q":         {"color": "#fff3b0", "show": True},    # Spots window: new Q, no mult
+    "spot_dupe":      {"color": "#9a9a9a", "show": False},   # Spots window: dupe / can't work
+}
+
+# DX cluster (telnet). login "" means "use the station call".
+DEFAULT_CLUSTER = {
+    "host": "w3lpl.net",
+    "port": 7373,
+    "login": "",
+    "max_age_min": 30,        # drop spots older than this
+    "auto_connect": False,    # connect when tttlog starts
+    "init_commands": [],      # sent once after login, e.g. ["set/skimmer", "sh/dx 30"]
+}
 
 # Macro text: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are substituted.
 # SSB: text is shown + the WAV file (in ~/.tttlog/wav/<MYCALL>/) is played by
@@ -99,6 +122,32 @@ def load_macros() -> dict:
 def save_macros(m: dict) -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
     MACROS_FILE.write_text(yaml.safe_dump(m, sort_keys=False))
+
+
+def load_cluster() -> dict:
+    cfg = dict(DEFAULT_CLUSTER)
+    if CLUSTER_FILE.exists():
+        cfg.update(yaml.safe_load(CLUSTER_FILE.read_text()) or {})
+    return cfg
+
+
+def save_cluster(cfg: dict) -> None:
+    CONFIG_DIR.mkdir(exist_ok=True)
+    CLUSTER_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def load_colors() -> dict:
+    out = {k: dict(v) for k, v in DEFAULT_COLORS.items()}
+    if COLORS_FILE.exists():
+        for k, v in (yaml.safe_load(COLORS_FILE.read_text()) or {}).items():
+            if k in out and isinstance(v, dict):
+                out[k].update(v)
+    return out
+
+
+def save_colors(c: dict) -> None:
+    CONFIG_DIR.mkdir(exist_ok=True)
+    COLORS_FILE.write_text(yaml.safe_dump(c, sort_keys=False))
 
 
 def expand(text: str, station: Station, call: str, exch: str, rst: str = "59") -> str:
