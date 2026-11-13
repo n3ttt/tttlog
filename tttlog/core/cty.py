@@ -9,7 +9,29 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"     # shipped with the app / repo
+USER_DATA_DIR = Path.home() / ".tttlog" / "data"            # newer files the user downloaded
+CTY_URL = "https://www.country-files.com/cty/cty.dat"
+
+
+def data_file(name: str) -> Path:
+    """The user's copy of a data file if they have one, else the shipped one."""
+    user = USER_DATA_DIR / name
+    return user if user.exists() else DATA_DIR / name
+
+
+def download_cty(timeout: float = 30) -> Path:
+    """Fetch the latest cty.dat into the user data folder; returns its path."""
+    import urllib.request
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(CTY_URL, timeout=timeout) as r:
+        data = r.read()
+    CtyDat.check(data)                       # don't replace a good file with an error page
+    dest = USER_DATA_DIR / "cty.dat"
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    return dest
 
 # Suffixes after a slash that do NOT change the entity
 _IGNORE_SUFFIXES = {"P", "M", "MM", "AM", "QRP", "A", "B", "LH", "R"}
@@ -31,7 +53,7 @@ _OVERRIDE = re.compile(r"\((\d+)\)|\[(\d+)\]|<[^>]*>|\{(\w+)\}|~[^~]*~")
 
 class CtyDat:
     def __init__(self, path: str | Path | None = None):
-        path = Path(path) if path else DATA_DIR / "cty.dat"
+        path = Path(path) if path else data_file("cty.dat")
         self.exact: dict[str, tuple[Entity, int | None]] = {}
         self.prefixes: dict[str, tuple[Entity, int | None]] = {}
         self._parse(path.read_text(encoding="latin-1"))
@@ -63,6 +85,13 @@ class CtyDat:
                     else:
                         self.prefixes[bare.upper()] = (entity, cq)
                 buf = ""
+
+    @staticmethod
+    def check(data: bytes) -> None:
+        """Raise ValueError unless data looks like a real cty.dat."""
+        text = data.decode("latin-1", "replace")
+        if len(data) < 20_000 or "United States" not in text or ";" not in text:
+            raise ValueError("downloaded file doesn't look like cty.dat")
 
     def entities(self) -> list[Entity]:
         """Every DXCC entity in the file, sorted by primary prefix."""
