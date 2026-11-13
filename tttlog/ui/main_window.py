@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QMainWindow, QMessageBox, QPushButton,
                                QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QGridLayout,
 from .. import config
 from ..contests.engine import ContestEngine, load_rules
 from ..core.cluster import parse_spot, spot_command
-from ..core.cty import DATA_DIR, CtyDat
+from .. import __version__
+from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
 from ..export.adif import export_adif, import_adif
@@ -42,7 +43,7 @@ QPushButton { min-width: 78px; }
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("tttlog")
+        self.setWindowTitle(f"tttlog {__version__}")
         self.resize(1100, 720)
         self.setStyleSheet(STYLE)
         self.settings = QSettings("N3TTT", "tttlog")
@@ -50,7 +51,7 @@ class MainWindow(QMainWindow):
         self.macros = config.load_macros()
         self.cluster_cfg = config.load_cluster()
         self.colors = config.load_colors()
-        self.cty_missing = not (DATA_DIR / "cty.dat").exists()
+        self.cty_missing = not data_file("cty.dat").exists()
         self.cty = CtyDat(FIXTURE_CTY if self.cty_missing else None)
         self.log: Log | None = None
         self.engine: ContestEngine | None = None
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
         if last and Path(last).exists():
             self.open_log(Path(last))
         if self.cty_missing:
-            self.banner("cty.dat missing: run  python scripts/update_cty.py  (using small test file)", "orange")
+            self.banner("Country file missing: File ▸ Update country file  (using a small test file)", "orange")
         self._refresh_rates()
         if self.cluster_cfg.get("auto_connect"):
             self.cluster_connect(True)
@@ -219,6 +220,8 @@ class MainWindow(QMainWindow):
                                 ("Export ADIF…", self.export_adif, None),
                                 ("Export Cabrillo…", self.export_cabrillo, None),
                                 (None, None, None),
+                                ("Update country file (cty.dat)", self.update_cty, None),
+                                (None, None, None),
                                 ("Quit", self.close, "Ctrl+Q")]:
             if text is None:
                 f.addSeparator(); continue
@@ -265,6 +268,8 @@ class MainWindow(QMainWindow):
         view.addAction(QAction("Restore all panes", self, shortcut="Ctrl+Shift+R",
                                triggered=self.restore_all_panes))
         view.addAction(QAction("Dock all pop-out windows", self, triggered=self.dock_all_panes))
+        hlp = mb.addMenu("&Help")
+        hlp.addAction(QAction("About tttlog…", self, triggered=self.show_about))
 
     def _build_shortcuts(self):
         for i in range(12):
@@ -320,7 +325,7 @@ class MainWindow(QMainWindow):
             self.spots_pane.refresh()
 
     def _load_scp(self) -> list[str]:
-        p = DATA_DIR / "MASTER.SCP"
+        p = data_file("MASTER.SCP")
         if not p.exists():
             return []
         return [l.strip() for l in p.read_text(errors="ignore").splitlines()
@@ -360,7 +365,7 @@ class MainWindow(QMainWindow):
         self.qsos = self.engine.rescore(self.log.all())
         self.needed_pane.set_engine(self.engine)
         self.settings.setValue("last_log", str(path))
-        self.setWindowTitle(f"tttlog — {rules['name']} — {path.name}")
+        self.setWindowTitle(f"tttlog {__version__} — {rules['name']} — {path.name}")
         self._refresh_radio()
         self._refresh_log()
         self.call.setFocus()
@@ -721,6 +726,39 @@ class MainWindow(QMainWindow):
 
     def _save_colors(self):
         config.save_colors(self.colors)
+
+    # ---------------------------------------------------------- data files / about
+    def update_cty(self):
+        self.banner("Downloading the latest country file…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            path = download_cty()
+            self.cty = CtyDat(path)
+            self.cty_missing = False
+        except Exception as e:                       # network down, bad file, ...
+            QApplication.restoreOverrideCursor()
+            self.banner(f"Couldn't update the country file: {e}", "#ffd166")
+            return
+        QApplication.restoreOverrideCursor()
+        if self.engine:
+            self.engine = ContestEngine(self.engine.rules, self.cty, self.station)
+            self.needed_pane.set_engine(self.engine)
+            self.qsos = self.engine.rescore(self.qsos)
+            self._refresh_log()
+        self.banner(f"Country file updated ({len(self.cty.entities())} entities)")
+
+    def show_about(self):
+        import platform
+        logs = self.log.path.parent if self.log else Path.home() / "Documents" / "tttlog"
+        QMessageBox.about(self, "About tttlog", (
+            f"<b>tttlog {__version__}</b> (alpha)<br>"
+            f"Amateur radio contest logger<br><br>"
+            f"Logs: {logs}<br>"
+            f"Settings: {config.CONFIG_DIR}<br>"
+            f"Country file: {data_file('cty.dat')}<br><br>"
+            f"{platform.system()} {platform.release()} · Python {platform.python_version()}<br>"
+            f"Please include this information in bug reports."))
 
     # ---------------------------------------------------------- panes
     @property

@@ -26,6 +26,13 @@ Windows and Linux use the same steps (Windows: `.venv\Scripts\activate`).
 
 Optional: put a `MASTER.SCP` file in `data/` to get Super Check Partial suggestions.
 
+## Alpha testers (no Python needed)
+
+Every pull request and push to `main` builds a Windows zip on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts ▸ `tttlog-windows`).
+Testers unzip it and double-click `tttlog.exe`. The zip includes `README-FIRST.txt` ([docs/TESTERS.md](docs/TESTERS.md)) with first-run steps and how to report bugs.
+To build one yourself on Windows: `pip install pyinstaller`, `python scripts/update_cty.py`, then `python scripts/build_app.py`. The zip lands in `dist/`.
+The same script builds a macOS or Linux version on those systems.
+
 ## Operating
 
 | Key | Action |

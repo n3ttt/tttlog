@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tttlog"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Cross-platform, one-window amateur radio contest logger"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -26,3 +26,6 @@ include = ["tttlog*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.dynamic]
+version = {attr = "tttlog.__version__"}
