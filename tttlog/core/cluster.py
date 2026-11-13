@@ -72,6 +72,17 @@ def strip_telnet(data: bytes) -> bytes:
     return split_telnet(data)[0]
 
 
+def spot_command(call: str, khz: float, comment: str = "") -> str:
+    """The cluster command that spots a station. DXSpider, AR-Cluster and
+    CC Cluster all accept  DX <kHz> <call> [comment]."""
+    call = call.strip().upper()
+    if not call or not re.fullmatch(r"[A-Z0-9/]+", call):
+        raise ValueError(f"not a callsign: {call!r}")
+    if band_from_khz(khz) is None:
+        raise ValueError(f"{khz} kHz is outside the ham bands")
+    return f"DX {khz:.1f} {call}" + (f" {comment.strip()}" if comment.strip() else "")
+
+
 def guess_mode(khz: float, comment: str = "") -> str:
     """Best guess at a spot's mode: comment keywords first, then band plan."""
     c = comment.upper()

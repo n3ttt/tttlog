@@ -65,6 +65,13 @@ def test_log_flow(app, tmp_path, monkeypatch):
     w.close()
 
 
+def _private_config(monkeypatch, tmp_path):
+    d = tmp_path / "cfg"
+    monkeypatch.setattr(config, "CONFIG_DIR", d)
+    for name in ("station", "macros", "cluster", "colors"):
+        monkeypatch.setattr(config, f"{name.upper()}_FILE", d / f"{name}.yaml")
+
+
 def _pump(app, cond, ms=3000):
     from PySide6.QtCore import QElapsedTimer
     t = QElapsedTimer(); t.start()
@@ -207,8 +214,7 @@ def test_rate_and_cluster_panes(app, tmp_path, monkeypatch):
 
 
 def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
-    for name in ("CONFIG_DIR", "STATION_FILE", "MACROS_FILE", "CLUSTER_FILE", "COLORS_FILE"):
-        monkeypatch.setattr(config, name, tmp_path / "cfg" / name.lower())
+    _private_config(monkeypatch, tmp_path)
     from tttlog.ui.main_window import MainWindow
     w = MainWindow()
     w.settings.clear()
@@ -223,3 +229,58 @@ def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
     assert w.dock_log.height() > 600                       # the space went to the panes
     assert w.call.height() >= w.call.sizeHint().height()   # entry fields not squashed
     w.close()
+
+
+def test_spot_last_qso_and_auto_spot(app, tmp_path, monkeypatch):
+    """Spot button and S&P auto-spot, against a fake local cluster only."""
+    from PySide6.QtNetwork import QHostAddress, QTcpServer
+    _private_config(monkeypatch, tmp_path)
+    config.save_station(Station(call="N3TTT", state="DE", cq_zone=5))
+    server = QTcpServer(); assert server.listen(QHostAddress.LocalHost, 0)
+    got = []
+    def on_conn():
+        c = server.nextPendingConnection()
+        c.readyRead.connect(lambda: got.append(bytes(c.readAll()).decode()))
+        c.write(b"login: ")
+    server.newConnection.connect(on_conn)
+    config.save_cluster({**config.DEFAULT_CLUSTER, "host": "127.0.0.1", "port": server.serverPort()})
+
+    from tttlog.ui.main_window import MainWindow
+    w = MainWindow()
+    db = tmp_path / "s.db"
+    l = Log(db); l.set_meta("contest_id", "ARRL-DX-SSB"); l.close()
+    w.open_log(db)
+    spots_sent = lambda: [x for x in "".join(got).split("\r\n") if x.startswith("DX ")]
+
+    w.spot_last_qso()                                         # nothing logged yet
+    assert "No QSOs" in w.banner_lbl.text()
+
+    def log(call, khz, run):
+        w.run_mode = run; w.set_freq(khz)
+        w.call.setText(call); w.exch.setText("100"); w.on_enter()
+
+    log("DL1ABC", 14250.0, run=True)
+    w.spot_last_qso()                                         # not connected
+    assert "Not connected" in w.banner_lbl.text()
+
+    w.cluster_connect(True)
+    assert _pump(app, lambda: any("N3TTT" in g for g in got))
+    w.spots_pane.spot_btn.click()                             # the button
+    assert _pump(app, lambda: spots_sent() == ["DX 14250.0 DL1ABC"])
+    assert "Spotted DL1ABC on 14250.0" in w.banner_lbl.text()
+
+    log("JA1AA", 21300.0, run=False)                          # auto-spot is off
+    _pump(app, lambda: False, 300)
+    assert spots_sent() == ["DX 14250.0 DL1ABC"]
+
+    w.auto_spot_action.setChecked(True)
+    assert config.load_cluster()["auto_spot_sp"] is True      # saved
+    log("G4XYZ", 7180.0, run=False)                           # S&P -> auto-spot
+    assert _pump(app, lambda: "DX 7180.0 G4XYZ" in spots_sent())
+    assert "Logged G4XYZ" in w.banner_lbl.text() and "(auto)" in w.banner_lbl.text()
+    log("PY2AA", 14260.0, run=True)                           # Run QSO -> no auto-spot
+    log("G4XYZ", 7182.0, run=False)                           # dupe -> no auto-spot
+    _pump(app, lambda: False, 300)
+    assert spots_sent() == ["DX 14250.0 DL1ABC", "DX 7180.0 G4XYZ"]
+    w.cluster_connect(False)
+    w.close(); server.close()

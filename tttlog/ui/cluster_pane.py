@@ -157,6 +157,7 @@ class SpotsPane(QWidget):
 
     spotActivated = Signal(object)          # Spot; later this will also tune the radio
     colorsChanged = Signal()
+    spotLastRequested = Signal()            # "Spot last QSO" button
 
     def __init__(self, colors: dict, parent=None):
         super().__init__(parent)
@@ -176,6 +177,11 @@ class SpotsPane(QWidget):
             t.changed.connect(self._on_toggle)
             bar.addWidget(t)
         bar.addStretch()
+        self.spot_btn = QPushButton("Spot last QSO")
+        self.spot_btn.setToolTip("Send the last QSO's call and frequency to the cluster")
+        self.spot_btn.setFocusPolicy(Qt.NoFocus)
+        self.spot_btn.clicked.connect(self.spotLastRequested)
+        bar.addWidget(self.spot_btn)
         self.band_box = QComboBox(); self.band_box.addItems(["All bands", "Current band"])
         self.band_box.setFocusPolicy(Qt.NoFocus)
         self.band_box.currentIndexChanged.connect(self.refresh)
