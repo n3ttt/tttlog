@@ -28,7 +28,7 @@ from .needed_pane import NeededPane
 from .rate_pane import RatePane
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
-LAYOUT_VERSION = "3"     # bump when panes are added/renamed so old saved layouts are dropped
+LAYOUT_VERSION = "5"     # bump when panes are added/renamed so old saved layouts are dropped
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 
 STYLE = """
@@ -145,13 +145,15 @@ class MainWindow(QMainWindow):
         self.tx_lbl = QLabel()
         v.addWidget(self.tx_lbl)
         # The entry line is a pane too, sized to its contents. There is no central
-        # widget, so every other pane can use the space below and beside it.
+        # widget: the window is two pane columns (left: Entry over Log + Spots,
+        # right: Score / Check Partial / Rate). Don't use setCorner() here: with
+        # no central widget it makes Qt widen the right column by a splitter
+        # width on every re-layout (each keystroke), squeezing the other panes.
         v.setContentsMargins(8, 4, 8, 4)
         v.setSpacing(4)
         w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        self.setCorner(Qt.TopRightCorner, Qt.RightDockWidgetArea)
-        self.setCorner(Qt.BottomRightCorner, Qt.RightDockWidgetArea)
-        self._dock("Entry", w, Qt.TopDockWidgetArea, closable=False)
+        self.setDockNestingEnabled(True)
+        self._dock("Entry", w, Qt.LeftDockWidgetArea, closable=False)
 
         # Log pane
         self.log_table = QTableWidget(0, 8)
@@ -161,7 +163,8 @@ class MainWindow(QMainWindow):
         self.log_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.log_table.verticalHeader().setVisible(False)
         self.log_table.doubleClicked.connect(self.edit_selected)
-        self._dock("Log", self.log_table, Qt.BottomDockWidgetArea)
+        self._dock("Log", self.log_table, Qt.LeftDockWidgetArea)
+        self.splitDockWidget(self.dock_entry, self.dock_log, Qt.Vertical)
 
         # Score pane
         self.score_table = QTableWidget(0, 4)
@@ -195,8 +198,10 @@ class MainWindow(QMainWindow):
         self.spots_pane.colorsChanged.connect(self._save_colors)
         self.spots_pane.spotLastRequested.connect(self.spot_last_qso)
         self._spotted: set[tuple] = set()          # (call, band) we've spotted this session
-        self._dock("Spots", self.spots_pane, Qt.BottomDockWidgetArea)
-        self._dock("Telnet", self.telnet_pane, Qt.BottomDockWidgetArea)
+        self._dock("Spots", self.spots_pane, Qt.LeftDockWidgetArea)
+        self.splitDockWidget(self.dock_log, self.dock_spots, Qt.Horizontal)
+        self._dock("Telnet", self.telnet_pane, Qt.LeftDockWidgetArea)
+        self.splitDockWidget(self.dock_spots, self.dock_telnet, Qt.Horizontal)   # tabbed after show
 
         # Needed window: every mult x band, colored by need / spotted
         self.needed_pane = NeededPane(self.colors)
@@ -770,10 +775,17 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.dock_rate, self.dock_needed)
         self.dock_spots.raise_()
         self.dock_rate.raise_()
+        QTimer.singleShot(50, self._default_sizes)    # once the tabs have been laid out
+
+    def _default_sizes(self):
         right = [self.dock_score, self.dock_check_partial, self.dock_rate]
-        self.resizeDocks(right, [max(420, self.width() * 9 // 25)] * 3, Qt.Horizontal)
+        # Set the column split from the left side (resizing the right column is
+        # ignored), in real pixels: small ratios like [2, 3] reset the column width.
+        left = self.width() * 62 // 100
+        self.resizeDocks([self.dock_log, self.dock_spots], [left * 2 // 5, left * 3 // 5], Qt.Horizontal)
+        self.resizeDocks([self.dock_entry], [left], Qt.Horizontal)
         self.resizeDocks(right, [215, 120, max(300, self.height() - 335)], Qt.Vertical)
-        self.resizeDocks([self.dock_log, self.dock_spots], [2, 3], Qt.Horizontal)
+        self.resizeDocks([self.dock_entry], [self.dock_entry.widget().sizeHint().height() + 24], Qt.Vertical)
 
     def minimize_all_panes(self):
         for d in self.panes:
