@@ -18,9 +18,9 @@ jobs:
       QT_QPA_PLATFORM: offscreen
       PYTHONUTF8: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -53,7 +53,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "tttlog.exe smoke test failed (exit $($p.ExitCode))" }
 
       - name: Upload zip
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tttlog-windows
           path: dist/tttlog-*-windows.zip
