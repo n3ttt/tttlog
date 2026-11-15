@@ -19,16 +19,19 @@ from .. import __version__
 from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
+from ..core.netsync import LogSync
 from ..export.adif import export_adif, import_adif
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
-from .dialogs import ClusterDialog, EditQsoDialog, MacroDialog, NewLogDialog, StationDialog
+from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, NewLogDialog,
+                      StationDialog)
 from .docks import Pane
 from .needed_pane import NeededPane
+from .network_pane import NetNode, NetworkPane
 from .rate_pane import RatePane
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
-LAYOUT_VERSION = "5"     # bump when panes are added/renamed so old saved layouts are dropped
+LAYOUT_VERSION = "6"     # bump when panes are added/renamed so old saved layouts are dropped
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 
 STYLE = """
@@ -51,6 +54,9 @@ class MainWindow(QMainWindow):
         self.macros = config.load_macros()
         self.cluster_cfg = config.load_cluster()
         self.colors = config.load_colors()
+        self.net_cfg = config.load_network()
+        self.node_id = config.node_id()
+        self.sync: LogSync | None = None
         self.cty_missing = not data_file("cty.dat").exists()
         self.cty = CtyDat(FIXTURE_CTY if self.cty_missing else None)
         self.log: Log | None = None
@@ -97,6 +103,8 @@ class MainWindow(QMainWindow):
         self._refresh_rates()
         if self.cluster_cfg.get("auto_connect"):
             self.cluster_connect(True)
+        if self.net_cfg.get("enabled"):
+            self.net.start(self.net_cfg)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -156,8 +164,9 @@ class MainWindow(QMainWindow):
         self._dock("Entry", w, Qt.LeftDockWidgetArea, closable=False)
 
         # Log pane
-        self.log_table = QTableWidget(0, 8)
-        self.log_table.setHorizontalHeaderLabels(["Time", "Call", "kHz", "Band", "Snt", "Rcv", "Country", "Pts"])
+        self.log_table = QTableWidget(0, 9)
+        self.log_table.setHorizontalHeaderLabels(["Time", "Call", "kHz", "Band", "Snt", "Rcv", "Country",
+                                                  "Pts", "Stn"])
         self.log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.log_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.log_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
@@ -209,6 +218,17 @@ class MainWindow(QMainWindow):
         self.needed_pane.colorsChanged.connect(self._save_colors)
         self._dock("Needed", self.needed_pane, Qt.RightDockWidgetArea)
 
+        # Local network: share the log with other tttlog stations
+        self.net = NetNode(self.node_id, self)
+        self.network_pane = NetworkPane()
+        self.net.logChanged.connect(lambda: self._net_dirty.isActive() or self._net_dirty.start())
+        self.net.peersChanged.connect(self._refresh_network_pane)
+        self.net.stateChanged.connect(lambda _t: self._refresh_network_pane())
+        self.net.talkReceived.connect(self._on_talk)
+        self.network_pane.talkSent.connect(self._send_talk)
+        self._net_dirty = QTimer(self, singleShot=True, interval=300, timeout=self._on_net_log_changed)
+        self._dock("Network", self.network_pane, Qt.RightDockWidgetArea)
+
     def _dock(self, title, widget, area, closable=True):
         d = Pane(title, widget, self, closable=closable)
         self.addDockWidget(area, d)
@@ -218,7 +238,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self):
         mb = self.menuBar()
         f = mb.addMenu("&File")
-        for text, slot, key in [("New contest log…", self.new_log, "Ctrl+N"),
+        for text, slot, key in [("New log (contest or general)…", self.new_log, "Ctrl+N"),
                                 ("Open log…", self.open_log_dialog, "Ctrl+O"),
                                 (None, None, None),
                                 ("Import ADIF…", self.import_adif, None),
@@ -237,13 +257,14 @@ class MainWindow(QMainWindow):
         op = mb.addMenu("&Operating")
         op.addAction(QAction("Toggle Run / S&&P", self, shortcut="Ctrl+R", triggered=self.toggle_run))
         op.addAction(QAction("Set frequency…", self, shortcut="Ctrl+F", triggered=self.ask_freq))
-        op.addAction(QAction("Mode SSB", self, triggered=lambda: self.set_mode("SSB")))
-        op.addAction(QAction("Mode CW", self, triggered=lambda: self.set_mode("CW")))
+        self.mode_menu = op.addMenu("Mode")
+        self._build_mode_menu(["SSB", "CW"])
         op.addAction(QAction("Delete selected QSO", self, shortcut="Ctrl+D", triggered=self.delete_selected))
         cfg = mb.addMenu("&Config")
         cfg.addAction(QAction("Station profile…", self, triggered=self.edit_station))
         cfg.addAction(QAction("Function-key macros…", self, triggered=self.edit_macros))
         cfg.addAction(QAction("DX cluster…", self, triggered=self.edit_cluster))
+        cfg.addAction(QAction("Local network…", self, triggered=self.edit_network))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -275,6 +296,11 @@ class MainWindow(QMainWindow):
         view.addAction(QAction("Dock all pop-out windows", self, triggered=self.dock_all_panes))
         hlp = mb.addMenu("&Help")
         hlp.addAction(QAction("About tttlog…", self, triggered=self.show_about))
+
+    def _build_mode_menu(self, modes):
+        self.mode_menu.clear()
+        for m in modes:
+            self.mode_menu.addAction(QAction(m, self, triggered=lambda _=False, m=m: self.set_mode(m)))
 
     def _build_shortcuts(self):
         for i in range(12):
@@ -323,8 +349,9 @@ class MainWindow(QMainWindow):
             m = page[i] if i < len(page) else {"label": ""}
             b.setText(f"F{i + 1} {m.get('label', '')}")
         if self.engine:
-            self.sent_lbl.setText(f"Sent: {self.engine.default_rst()} {self.engine.sent_exchange()}")
+            self.sent_lbl.setText(f"Sent: {self.engine.default_rst(self.mode)} {self.engine.sent_exchange()}")
         self.settings.setValue("freq_khz", self.freq_khz)
+        self._push_net_status()
         if hasattr(self, "spots_pane") and self.spots_pane.current_band != band:
             self.spots_pane.current_band = band
             self.spots_pane.refresh()
@@ -364,9 +391,15 @@ class MainWindow(QMainWindow):
         rules = load_rules(cid)
         self.engine = ContestEngine(rules, self.cty, self.station)
         self.mode = rules["modes"][0]
-        self.rst.setText(self.engine.default_rst())
+        self._build_mode_menu(rules["modes"])
+        self.rst.setText(self.engine.default_rst(self.mode))
         self.exch.setPlaceholderText(" ".join(f.get("label", f["name"]).upper()
                                               for f in self.engine.rcvd_fields))
+        general = self.engine.is_general
+        for c in (2, 3):                              # no points or band mults in a general log
+            self.score_table.setColumnHidden(c, general)
+        self.sync = LogSync(self.log, self.node_id, self.net_cfg["station_name"])
+        self.net.set_log(self.sync, cid)
         self.qsos = self.engine.rescore(self.log.all())
         self.needed_pane.set_engine(self.engine)
         self.settings.setValue("last_log", str(path))
@@ -392,8 +425,13 @@ class MainWindow(QMainWindow):
         band = band_from_khz(self.freq_khz)
         hit = self.cty.lookup(call)
         where = f"{hit[0].name}  CQ{hit[1]}  {hit[0].continent}" if hit else "unknown prefix"
+        if self.engine.is_general:
+            self._general_check(call, hit, where)
+            return
         if self.engine.is_dupe(call, band, self.mode, self.qsos):
-            self.banner(f"DUPE on {band} — {where}", "#ff6b6b")
+            by = next((q.station_name for q in reversed(self.qsos) if q.call == call and q.band == band
+                       and q.station_name and q.station_name != self.net_cfg["station_name"]), "")
+            self.banner(f"DUPE on {band}" + (f" (worked by {by})" if by else "") + f" — {where}", "#ff6b6b")
             return
         probe = self.engine.annotate(QSO(call=call, freq_khz=self.freq_khz, mode=self.mode), self.qsos)
         if not self.engine.is_valid(probe):
@@ -402,6 +440,20 @@ class MainWindow(QMainWindow):
         new = self.engine.is_new_mult(probe, self.qsos)
         if new:
             self.banner(f"NEW MULT ({', '.join(new)}) — {where}", "#7bd389")
+        else:
+            self.banner(where)
+
+    def _general_check(self, call, hit, where):
+        """General log: no dupes; say if it's a new country or worked before."""
+        before = self.engine.worked_before(call, self.qsos)
+        probe = self.engine.annotate(QSO(call=call, freq_khz=self.freq_khz, mode=self.mode), self.qsos)
+        new = self.engine.is_new_mult(probe, self.qsos) if hit else []
+        if before:
+            last = before[0]
+            self.banner(f"Worked {len(before)}× — last {last.time_utc:%Y-%m-%d} {last.band or ''} "
+                        f"{last.mode} {last.exch_rcvd}".rstrip() + f" — {where}", "#bde0fe")
+        elif new:
+            self.banner(f"NEW ONE ({', '.join(new)}) — {where}", "#7bd389")
         else:
             self.banner(where)
 
@@ -425,14 +477,19 @@ class MainWindow(QMainWindow):
             self.set_freq(float(call))
             self.call.clear()
             return
+        modes = self.engine.rules["modes"] if self.engine else ["SSB", "CW"]
+        if call in modes:                                 # type CW / SSB / FT8 + Enter to change mode
+            self.set_mode(call)
+            self.call.clear()
+            return
         if not self.engine:
-            self.banner("No log open — File ▸ New contest log", "#ffd166")
+            self.banner("No log open — File ▸ New log", "#ffd166")
             return
         # ESM-lite
         if not call:
             self.fkey(0)                                  # CQ / MyCall
             return
-        if not self.exch.text().strip():
+        if not self.exch.text().strip() and self.engine.exchange_required():
             self._prefill()
             self.fkey(1)                                  # send exchange
             self.exch.setFocus()
@@ -446,18 +503,22 @@ class MainWindow(QMainWindow):
 
     def log_qso(self):
         q = QSO(call=self.call.text().strip().upper(), freq_khz=self.freq_khz, mode=self.mode,
-                rst_sent=self.engine.default_rst(), rst_rcvd=self.rst.text().strip() or "59",
+                rst_sent=self.engine.default_rst(self.mode),
+                rst_rcvd=self.rst.text().strip() or self.engine.default_rst(self.mode),
                 exch_sent=self.engine.sent_exchange(), exch_rcvd=self.exch.text().strip().upper(),
                 station_call=self.station.call, operator=self.station.operator or self.station.call,
                 contest_id=self.engine.rules["id"])
         self.engine.annotate(q, self.qsos)
         if self.run_mode:
             self.fkey(2)                                  # TU
-        self.log.add(q)
+        self.net.publish(self.sync.local_put(q))
         self.qsos.append(q)
         self._refresh_log()
         self.wipe()
-        self.banner(f"Logged {q.call}  {q.country}  +{q.points}" + ("  (DUPE)" if q.is_dupe else ""))
+        if self.engine.is_general:
+            self.banner(f"Logged {q.call}  {q.country}  {q.band} {q.mode}")
+        else:
+            self.banner(f"Logged {q.call}  {q.country}  +{q.points}" + ("  (DUPE)" if q.is_dupe else ""))
         if (not self.run_mode and not q.is_dupe and self.cluster_cfg.get("auto_spot_sp")
                 and self.cluster.is_connected() and (q.call, q.band) not in self._spotted):
             self.spot_qso(q, auto=True)
@@ -465,7 +526,7 @@ class MainWindow(QMainWindow):
     def wipe(self):
         self.call.clear(); self.exch.clear()
         if self.engine:
-            self.rst.setText(self.engine.default_rst())
+            self.rst.setText(self.engine.default_rst(self.mode))
         self.partials.clear()
         self.call.setFocus()
 
@@ -483,7 +544,7 @@ class MainWindow(QMainWindow):
             return
         exch = self.engine.sent_exchange() if self.engine else ""
         txt = config.expand(m.get("text", ""), self.station, self.call.text().strip().upper(),
-                            exch, self.engine.default_rst() if self.engine else "59")
+                            exch, self.engine.default_rst(self.mode) if self.engine else "59")
         wav = m.get("wav", "")
         # Rig/voice keyer output arrives in milestone M1; for now show what would be sent.
         self.tx_lbl.setText(f"TX F{n + 1}: {txt}" + (f"   [{wav}]" if wav and self.mode == "SSB" else ""))
@@ -503,7 +564,10 @@ class MainWindow(QMainWindow):
             self.set_freq(khz)
 
     def set_mode(self, mode):
+        old = self.engine.default_rst(self.mode) if self.engine else "59"
         self.mode = mode
+        if self.engine and self.rst.text().strip() in ("", old):   # 59 <-> 599 unless typed
+            self.rst.setText(self.engine.default_rst(mode))
         self._refresh_radio()
 
     def toggle_run(self):
@@ -517,7 +581,7 @@ class MainWindow(QMainWindow):
         for r, q in enumerate(self.qsos):
             vals = [q.time_utc.strftime("%m-%d %H:%M"), q.call, f"{q.freq_khz:.1f}", q.band or "",
                     f"{q.rst_sent} {q.exch_sent}", f"{q.rst_rcvd} {q.exch_rcvd}", q.country,
-                    "DUPE" if q.is_dupe else str(q.points)]
+                    "DUPE" if q.is_dupe else str(q.points), q.station_name]
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
                 it.setData(Qt.UserRole, q.id)
@@ -525,7 +589,10 @@ class MainWindow(QMainWindow):
         t.scrollToBottom()
         if self.engine:
             s = self.engine.score(self.qsos)
-            self.score_lbl.setText(f"Q {s.qsos}  Pts {s.points}  Mult {s.mults}  =  {s.total:,}")
+            if self.engine.is_general:
+                self.score_lbl.setText(f"QSOs {s.qsos}  ·  DXCC {s.mults}")
+            else:
+                self.score_lbl.setText(f"Q {s.qsos}  Pts {s.points}  Mult {s.mults}  =  {s.total:,}")
             st = self.score_table
             st.setRowCount(len(s.by_band) + 1)
             for r, (band, b) in enumerate(s.by_band.items()):
@@ -537,6 +604,7 @@ class MainWindow(QMainWindow):
         self._refresh_rates()
         self.spots_pane.reevaluate(self.engine, self.qsos)
         self._refresh_needed()
+        self._push_net_status()
 
     def _selected_qso(self) -> QSO | None:
         rows = self.log_table.selectionModel().selectedRows()
@@ -555,7 +623,8 @@ class MainWindow(QMainWindow):
                 dlg.apply()
             except ValueError as e:
                 QMessageBox.warning(self, "Edit", str(e)); return
-            self._rescore_and_persist(self.qsos, always={q.id})
+            self.net.publish(self.sync.local_put(q))
+            self._rescore_and_persist(self.qsos)
 
     def _rescore_and_persist(self, qsos: list[QSO], always: set = frozenset()):
         """Rescore, then write back only QSOs whose scoring changed (keeps the journal small)."""
@@ -570,7 +639,7 @@ class MainWindow(QMainWindow):
         q = self._selected_qso()
         if q and QMessageBox.question(self, "Delete", f"Delete {q.call} at {q.time_utc:%H:%M}?") \
                 == QMessageBox.Yes:
-            self.log.delete(q.id)
+            self.net.publish(self.sync.local_delete(q))
             self._rescore_and_persist([x for x in self.qsos if x.id != q.id])
 
     # ---------------------------------------------------------- config
@@ -612,6 +681,10 @@ class MainWindow(QMainWindow):
     def export_cabrillo(self):
         if not self._need_log():
             return
+        if self.engine.is_general:
+            QMessageBox.information(self, "Export Cabrillo",
+                                    "Cabrillo is for contest logs. Use File ▸ Export ADIF for a general log.")
+            return
         p, _ = QFileDialog.getSaveFileName(self, "Export Cabrillo", str(self.log.path.with_suffix(".log")),
                                            "Cabrillo (*.log *.cbr)")
         if p:
@@ -625,9 +698,10 @@ class MainWindow(QMainWindow):
         p, _ = QFileDialog.getOpenFileName(self, "Import ADIF", str(Path.home()), "ADIF (*.adi *.adif)")
         if not p:
             return
-        for q in import_adif(p):
-            q.contest_id = self.engine.rules["id"]
-            self.log.add(q)
+        with self.sync.bulk():
+            for q in import_adif(p, general=self.engine.is_general):
+                q.contest_id = self.engine.rules["id"]
+                self.net.publish(self.sync.local_put(q))
         self._rescore_and_persist(self.log.all())
 
     # ---------------------------------------------------------- DX cluster
@@ -732,6 +806,58 @@ class MainWindow(QMainWindow):
     def _save_colors(self):
         config.save_colors(self.colors)
 
+    # ---------------------------------------------------------- local network
+    def edit_network(self):
+        dlg = NetworkDialog(self.net_cfg, self.net.port, self)
+        if not dlg.exec():
+            return
+        self.net_cfg = dlg.values()
+        config.save_network(self.net_cfg)
+        if self.sync:
+            self.sync.station_name = self.net_cfg["station_name"]
+        if self.net_cfg["enabled"]:
+            self.net.start(self.net_cfg)
+            self._push_net_status()
+        else:
+            self.net.stop()
+        self._refresh_network_pane()
+
+    def _on_net_log_changed(self):
+        """QSOs came in from other stations: rescore everything and redraw."""
+        if not self.log:
+            return
+        self._rescore_and_persist(self.log.all())
+        call = self.call.text().strip().upper()
+        if call:
+            self._live_check(call)                    # someone else may have just worked it
+
+    def _push_net_status(self):
+        if not hasattr(self, "net"):
+            return
+        me = self.net_cfg.get("station_name", "")
+        self.net.set_status({"op": self.station.operator or self.station.call,
+                             "band": band_from_khz(self.freq_khz), "freq": self.freq_khz,
+                             "mode": self.mode, "run": self.run_mode,
+                             "qsos": sum(1 for q in self.qsos if q.station_name == me)})
+        self._refresh_network_pane()
+
+    def _refresh_network_pane(self):
+        me = {"name": self.net_cfg.get("station_name", ""), "status": dict(self.net.status), "direct": True}
+        self.network_pane.refresh(me, list(self.net.peers.values()) if self.net.running else [],
+                                  self.net.summary() if self.net.running
+                                  else "Network off — Config ▸ Local network")
+
+    def _send_talk(self, text: str):
+        if not self.net.running:
+            self.banner("Network is off — Config ▸ Local network", "#ffd166")
+            return
+        self.net.talk(text)
+        self.network_pane.add_talk(self.net_cfg["station_name"], text)
+
+    def _on_talk(self, who: str, text: str):
+        self.network_pane.add_talk(who, text)
+        self.banner(f"{who}: {text}", "#bde0fe")
+
     # ---------------------------------------------------------- data files / about
     def update_cty(self):
         self.banner("Downloading the latest country file…")
@@ -773,6 +899,7 @@ class MainWindow(QMainWindow):
     def _default_tabs(self):
         self.tabifyDockWidget(self.dock_spots, self.dock_telnet)
         self.tabifyDockWidget(self.dock_rate, self.dock_needed)
+        self.tabifyDockWidget(self.dock_needed, self.dock_network)
         self.dock_spots.raise_()
         self.dock_rate.raise_()
         QTimer.singleShot(50, self._default_sizes)    # once the tabs have been laid out
@@ -809,6 +936,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window_state", self.saveState())
         self.settings.setValue("layout_version", LAYOUT_VERSION)
         self.cluster.disconnect_from()
+        self.net.stop()
         if self.log:
             self.log.close()
         super().closeEvent(ev)

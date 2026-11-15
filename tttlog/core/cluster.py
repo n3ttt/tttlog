@@ -30,9 +30,11 @@ IAC = 255
 # Approximate start of the phone segment per band (kHz). Below = CW/digital.
 # Contest phone activity sits a little lower than the US band plan on 160/80.
 PHONE_START = {"160m": 1840, "80m": 3600, "60m": 0, "40m": 7125, "20m": 14150,
-               "17m": 18110, "15m": 21200, "12m": 24930, "10m": 28300, "6m": 50100}
+               "17m": 18110, "15m": 21200, "12m": 24930, "10m": 28300, "6m": 50100,
+               "2m": 144100, "70cm": 432100}
 
 DIGI_WORDS = ("FT8", "FT4", "RTTY", "PSK", "JT65", "JS8")
+DIGI_MODES = {"FT8", "FT4", "RTTY", "PSK31", "JS8", "DIGI"}
 
 
 def split_telnet(data: bytes) -> tuple[bytes, bytes]:
@@ -184,11 +186,14 @@ class SpotList:
                 have.update(engine.mult_values(p))
         for s in (only if only is not None else self._spots.values()):
             mode = s.mode if s.mode in ("SSB", "CW") else (modes[0] if modes else "SSB")
+            if s.mode == "DIGI" and DIGI_MODES & set(modes):
+                mode = next(m for m in modes if m in DIGI_MODES)
             probe = engine.annotate(QSO(call=s.call, freq_khz=s.freq_khz, mode=mode), log)
             s.country = probe.country
             s.mults = []
             s.keys = engine.mult_values(probe)
-            if (s.mode not in ("?", "") and modes and s.mode not in modes) or not engine.is_valid(probe):
+            wrong_mode = s.mode not in ("?", "") and modes and mode not in modes
+            if wrong_mode or not engine.is_valid(probe):
                 s.status = "INVALID"
                 s.keys = []                       # can't be worked, so it doesn't count as spotted
             elif probe.is_dupe:

@@ -13,6 +13,19 @@ STATION_FILE = CONFIG_DIR / "station.yaml"
 MACROS_FILE = CONFIG_DIR / "macros.yaml"
 CLUSTER_FILE = CONFIG_DIR / "cluster.yaml"
 COLORS_FILE = CONFIG_DIR / "colors.yaml"
+NETWORK_FILE = CONFIG_DIR / "network.yaml"
+NODE_ID_FILE = CONFIG_DIR / "node_id"
+
+# Local network (several tttlog computers sharing one log). Stations find each
+# other with a UDP broadcast on udp_port and link over TCP on tcp_port.
+DEFAULT_NETWORK = {
+    "enabled": False,
+    "station_name": "",       # "" = this computer's name, e.g. RUN1 / MULT / SHACK-PC
+    "net_name": "TTTLOG",     # only stations with the same network name link up
+    "tcp_port": 12071,
+    "udp_port": 12070,
+    "peers": [],              # extra stations to dial, "host" or "host:port" (when broadcast can't reach)
+}
 
 # Colors for the Needed window and the Spots window. "show" = the checkbox state.
 DEFAULT_COLORS = {
@@ -137,6 +150,36 @@ def load_cluster() -> dict:
 def save_cluster(cfg: dict) -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
     CLUSTER_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def load_network() -> dict:
+    cfg = dict(DEFAULT_NETWORK)
+    if NETWORK_FILE.exists():
+        cfg.update(yaml.safe_load(NETWORK_FILE.read_text()) or {})
+    if not cfg.get("station_name"):
+        import socket
+        cfg["station_name"] = (socket.gethostname().split(".")[0] or "STATION").upper()[:16]
+    return cfg
+
+
+def save_network(cfg: dict) -> None:
+    NETWORK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NETWORK_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def node_id() -> str:
+    """A permanent id for this tttlog install (tells networked stations apart)."""
+    try:
+        v = NODE_ID_FILE.read_text().strip()
+        if len(v) >= 8:
+            return v
+    except OSError:
+        pass
+    import uuid
+    v = uuid.uuid4().hex
+    NODE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NODE_ID_FILE.write_text(v)
+    return v
 
 
 def load_colors() -> dict:
