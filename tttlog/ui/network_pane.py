@@ -21,6 +21,7 @@ import uuid
 from collections import deque
 from datetime import datetime, timezone
 
+import shiboken6
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtNetwork import (QAbstractSocket, QHostAddress, QNetworkInterface, QTcpServer,
@@ -96,12 +97,17 @@ class Link(QObject):
         self.closed.emit(self)
 
     def finish(self) -> None:
+        """Shut the socket and free the link now. Only called from the node's
+        timer or stop(), never from inside this socket's signals. Freed at
+        once rather than with deleteLater(): a link still waiting to be freed
+        when its node was garbage-collected crashed Python on Linux."""
         if self._graceful and self.connected():
-            self.sock.flush()                        # send what's queued (a "bye") first
+            self.sock.flush()                        # hand the "bye" to the OS first
             self.sock.disconnectFromHost()
         else:
             self.sock.abort()
-        self.deleteLater()
+        if shiboken6.isValid(self):
+            shiboken6.delete(self)
 
     def _read(self) -> None:
         self._buf += bytes(self.sock.readAll())
@@ -194,7 +200,10 @@ class NetNode(QObject):
         self._reap()
         self.server.close()
         if self.udp:
-            self.udp.close(); self.udp.deleteLater(); self.udp = None
+            self.udp.close()
+            if shiboken6.isValid(self.udp):
+                shiboken6.delete(self.udp)
+            self.udp = None
         self.peers.clear()
         self._known.clear()
         self.port = 0
