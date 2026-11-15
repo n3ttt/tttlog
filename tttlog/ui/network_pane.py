@@ -70,10 +70,11 @@ class Link(QObject):
         self.peer_id = ""
         self.ready = False                 # hello received and accepted
         self.dead = False
+        self._graceful = False
         self._buf = b""
         sock.readyRead.connect(self._read)
-        sock.disconnected.connect(self._gone)
-        sock.errorOccurred.connect(lambda _e: self._gone())
+        sock.disconnected.connect(self.close)
+        sock.errorOccurred.connect(lambda _e: self.close())
 
     def connected(self) -> bool:
         return self.sock.state() == QAbstractSocket.ConnectedState
@@ -83,17 +84,24 @@ class Link(QObject):
             self.sock.write((json.dumps(msg, separators=(",", ":")) + "\n").encode("utf-8"))
 
     def close(self, graceful: bool = False) -> None:
-        if not self.dead:
-            if graceful:
-                self.sock.disconnectFromHost()       # sends what's queued (a "bye") first
-            else:
-                self.sock.abort()
-            self._gone()
+        """Stop using this link. Safe to call from inside the socket's own
+        signal handlers: nothing is shut or freed here. The NetNode calls
+        finish() a moment later from its own timer. (Aborting a socket inside
+        its own readyRead crashed on Windows.)"""
+        if self.dead:
+            return
+        self.dead, self.ready = True, False
+        self._graceful = graceful
+        self.sock.blockSignals(True)                 # no more readyRead / error re-entry
+        self.closed.emit(self)
 
-    def _gone(self) -> None:
-        if not self.dead:
-            self.dead = True
-            self.closed.emit(self)
+    def finish(self) -> None:
+        if self._graceful and self.connected():
+            self.sock.flush()                        # send what's queued (a "bye") first
+            self.sock.disconnectFromHost()
+        else:
+            self.sock.abort()
+        self.deleteLater()
 
     def _read(self) -> None:
         self._buf += bytes(self.sock.readAll())
@@ -143,6 +151,11 @@ class NetNode(QObject):
         self.udp: QUdpSocket | None = None
         self._beacon = QTimer(self, interval=BEACON_MS, timeout=self._send_beacon)
         self._tick = QTimer(self, interval=TICK_MS, timeout=self._maintain)
+        # Closed links are shut and freed from here, outside their socket's
+        # signal handlers. This timer belongs to the node, so it can't fire
+        # after the node (and its links) are gone.
+        self._dead: list[Link] = []
+        self._reaper = QTimer(self, singleShot=True, interval=0, timeout=self._reap)
 
     # ------------------------------------------------------------ control
     @property
@@ -178,6 +191,7 @@ class NetNode(QObject):
         for l in list(self.links):
             l.close()
         self.links.clear()
+        self._reap()
         self.server.close()
         if self.udp:
             self.udp.close(); self.udp.deleteLater(); self.udp = None
@@ -311,12 +325,18 @@ class NetNode(QObject):
     def _on_closed(self, link: Link) -> None:
         if link in self.links:
             self.links.remove(link)
-        link.deleteLater()
+        self._dead.append(link)
+        self._reaper.start()
         if link.peer_id and link.peer_id in self.peers:
             if not any(l.ready and l.peer_id == link.peer_id for l in self.links):
                 self.peers[link.peer_id]["direct"] = False
             self.peersChanged.emit()
             self.stateChanged.emit(self.summary())
+
+    def _reap(self) -> None:
+        dead, self._dead = self._dead, []
+        for l in dead:
+            l.finish()
 
     def _maintain(self) -> None:
         now = time.monotonic()
