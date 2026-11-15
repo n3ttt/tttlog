@@ -88,7 +88,7 @@ class StationDialog(QDialog):
 class NewLogDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New contest log")
+        self.setWindowTitle("New log")
         f = QFormLayout(self)
         self.contest = QComboBox()
         self._contests = list_contests()
@@ -98,7 +98,7 @@ class NewLogDialog(QDialog):
         browse = QPushButton("…")
         browse.clicked.connect(self._browse)
         row = QHBoxLayout(); row.addWidget(self.path); row.addWidget(browse)
-        f.addRow("Contest", self.contest)
+        f.addRow("Contest / log type", self.contest)
         f.addRow("Log file", row)
         f.addRow(_buttons(self))
         self.contest.currentIndexChanged.connect(self._default_path)
@@ -107,7 +107,10 @@ class NewLogDialog(QDialog):
     def _default_path(self):
         d = Path.home() / "Documents" / "tttlog"
         cid = self.contest.currentData() or "log"
-        self.path.setText(str(d / f"{cid}_{datetime.utcnow():%Y%m%d}.db"))
+        if cid == "GENERAL":                       # one general log you keep adding to
+            self.path.setText(str(d / "general_log.db"))
+        else:
+            self.path.setText(str(d / f"{cid}_{datetime.utcnow():%Y%m%d}.db"))
 
     def _browse(self):
         p, _ = QFileDialog.getSaveFileName(self, "Log file", self.path.text(), "Log (*.db)")
@@ -201,3 +204,47 @@ class EditQsoDialog(QDialog):
         q.rst_sent, q.rst_rcvd = self.rst_s.text().strip(), self.rst_r.text().strip()
         q.exch_sent, q.exch_rcvd = self.ex_s.text().upper().strip(), self.ex_r.text().upper().strip()
         return q
+
+
+class NetworkDialog(QDialog):
+    """Config ▸ Local network: share one log between computers in the shack."""
+
+    def __init__(self, cfg: dict, port_in_use: int = 0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Local network")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.enabled = QCheckBox("Share the log with other tttlog stations on this network")
+        self.enabled.setChecked(bool(cfg.get("enabled")))
+        self.name = QLineEdit(str(cfg.get("station_name", "")))
+        self.name.setMaxLength(16)
+        self.name.setPlaceholderText("e.g. RUN1, MULT, SHACK")
+        self.net = QLineEdit(str(cfg.get("net_name", "TTTLOG")))
+        self.net.setMaxLength(32)
+        self.tcp = QSpinBox(); self.tcp.setRange(1024, 65535); self.tcp.setValue(int(cfg.get("tcp_port", 12071)))
+        self.udp = QSpinBox(); self.udp.setRange(1024, 65535); self.udp.setValue(int(cfg.get("udp_port", 12070)))
+        self.peers = QLineEdit(", ".join(cfg.get("peers", [])))
+        self.peers.setPlaceholderText("only if stations don't find each other, e.g. 192.168.1.20, shack-pc:12071")
+        note = QLabel(
+            "Stations with the same network name and the same contest share one log:\n"
+            "every QSO, edit and delete shows up on all of them, and dupes count across stations.\n"
+            "Each station keeps a full copy, so a station that drops out catches up when it's back.\n"
+            "Windows will ask to allow tttlog through the firewall: allow it on Private networks."
+            + (f"\nListening now on port {port_in_use}." if port_in_use else ""))
+        note.setWordWrap(True)
+        f.addRow(self.enabled)
+        for lbl, w in [("This station's name", self.name), ("Network name", self.net),
+                       ("TCP port", self.tcp), ("Discovery (UDP) port", self.udp),
+                       ("Other stations by address", self.peers)]:
+            f.addRow(lbl, w)
+        f.addRow(note)
+        f.addRow(_buttons(self))
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(enabled=self.enabled.isChecked(),
+                   station_name=self.name.text().strip().upper() or out.get("station_name", ""),
+                   net_name=self.net.text().strip().upper() or "TTTLOG",
+                   tcp_port=self.tcp.value(), udp_port=self.udp.value(),
+                   peers=[p.strip() for p in self.peers.text().replace(";", ",").split(",") if p.strip()])
+        return out

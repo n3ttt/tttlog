@@ -25,7 +25,8 @@ To uninstall, delete the tttlog folder. Your logs and settings are kept
 2. First run
 ------------
 1. Config > Station profile: enter your call, state, and CQ zone.
-2. File > New contest log: pick the contest. Logs go in
+2. File > New log: pick a contest, or "General log" for everyday QSOs
+   (no dupes, free-text notes, shows new countries). Logs go in
    Documents\tttlog unless you choose another folder.
 3. Type a call, press Space to jump to the exchange, press Enter to log.
    Typing a frequency in kHz (for example 14250) + Enter changes frequency.
@@ -33,6 +34,12 @@ To uninstall, delete the tttlog folder. Your logs and settings are kept
    logs in with your call), then Cluster > Connect (Ctrl+K).
    Spotting (F11 or Ctrl+Shift+S) sends a real spot that everyone on the
    cluster sees, so only spot real QSOs.
+
+Two or more computers (multi-op): on each one, Config > Local network,
+tick "Share the log", give each its own station name, use the same
+network name, and open a log for the same contest. QSOs, dupes and talk
+messages are shared. When Windows asks about the firewall, allow tttlog
+on Private networks.
 
 Before a contest, use File > Update country file to get the latest
 country list.

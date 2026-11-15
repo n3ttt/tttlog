@@ -112,11 +112,36 @@ Unticking a state hides those cells, and hides any row left with nothing to show
 The drop-down switches between mult types (for example Zones and Countries in CQWW), and the search box filters by prefix, country, or zone. Double-click a spotted cell to go to the newest spot for it.
 Colors and checkbox choices are saved in `~/.tttlog/colors.yaml`.
 
+## General log
+
+File ▸ New log ▸ **General log** is for everyday QSOs outside contests. It's one log file (`general_log.db`) you keep adding to.
+- No dupes: work anyone again. The banner says **Worked 2× — last 2026-11-01 20m SSB HANS…** instead.
+- A new country shows **NEW ONE**, and the Spots and Needed windows treat new countries as the "mults". The score line shows QSOs and DXCC count.
+- The Rcvd box is free text (name, QTH, notes) and can be left empty: type the call and press Enter to log.
+- Modes: SSB, CW, FT8, FT4, RTTY, AM, FM (Operating ▸ Mode, or type the mode in the call box and press Enter). The RST default follows the mode (59 / 599 / -10).
+- Bands: 160m–6m plus 2m and 70cm.
+- Export ADIF puts the notes in COMMENT for LoTW / QRZ / Club Log; Cabrillo is only for contests.
+
+## Local network (multi-op / several computers)
+
+Several tttlog computers in the shack can share one log. Set it up on each computer with Config ▸ Local network:
+1. Tick **Share the log**, give each computer its own station name (RUN1, MULT, …), and use the same network name on all of them.
+2. Open a log for the same contest on each computer (an empty new log is fine: it fills in from the others).
+
+Stations find each other with a UDP broadcast (port 12070) and link over TCP (port 12071). If they can't find each other (different subnet, a VM behind NAT, broadcasts blocked), list the other computers under **Other stations by address**, for example `192.168.1.20`. On Windows, allow tttlog through the firewall on Private networks when asked.
+
+What's shared:
+- Every QSO, edit, and delete, as it happens. Dupes and mults count across all stations; the banner says **DUPE on 20m (worked by RUN1)**. The Log pane's **Stn** column shows who logged each QSO.
+- Each station keeps a full copy. A station that drops out (or a PC that reboots) catches up when it's back, and QSOs logged while it was cut off go to the others too. If two stations edit the same QSO while cut off, the newer edit wins on every station.
+- The **Network** pane lists each station's operator, band, frequency, mode, Run/S&P, and QSO count. A station on your band and mode is highlighted, and a clock more than a minute off is flagged. The box at the bottom sends talk messages to all stations.
+
+The network name keeps separate groups apart; it isn't a password. Use it only on a network you trust.
+
 ## Contests
 
 Each contest is one YAML file in `tttlog/contests/rules/`. Add a new file to add a contest; nothing needs recompiling.
 
-Included: `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`.
+Included: `GENERAL` (everyday log), `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`.
 
 ## Your settings
 
@@ -125,6 +150,7 @@ Settings live in `~/.tttlog/`:
 - `macros.yaml`: F-keys (Config ▸ Function-key macros). Besides the text fields, `{CLEAR}` wipes the entry line and `{SPOT}` spots the last QSO, so you can put Spot on any key.
 - `cluster.yaml`: DX cluster host, login, and options (Config ▸ DX cluster)
 - `colors.yaml`: colors and checkboxes for the Needed and Spots windows
+- `network.yaml`: local network settings (Config ▸ Local network); `node_id` tells this install apart from the other stations
 
 ## Safety
 
@@ -136,7 +162,7 @@ If the database is ever damaged, `Log.recover_from_journal()` rebuilds it.
 - **M1 (Dec):** rig control (Hamlib rigctld + native Yaesu CAT for FTDX-10), voice keyer (WAV through the radio's USB audio + CAT PTT)
 - **M2 (Jan):** DX cluster + bandmap, N1MM-format UDP broadcast (World Radio League, etc.), online scoreboard posting
 - **M3 (Feb):** Windows/Linux builds, a full dry run
-- Later: SO2R, multi-op networking, more contests
+- Later: SO2R, more contests
 
 ## License
 
