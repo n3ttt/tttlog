@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=tttlog
+GenericName=Contest logger
+Comment=Amateur radio contest and general logger
+Exec=tttlog
+Icon=tttlog
+Terminal=false
+Categories=HamRadio;Network;
+Keywords=ham;amateur radio;contest;log;

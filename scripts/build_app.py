@@ -5,7 +5,9 @@
     python scripts/build_app.py
 
 Output: dist/tttlog/ (a folder with tttlog.exe on Windows, or tttlog on
-macOS/Linux) and dist/tttlog-<version>-<platform>.zip ready to hand out.
+macOS/Linux) and dist/tttlog-<version>-<platform>.zip (.tar.gz on Linux, so
+the program keeps its "executable" mark) ready to hand out. On Linux,
+scripts/build_appimage.sh then turns the folder into a single AppImage.
 PyInstaller can't cross-compile: build the Windows zip on Windows (the
 GitHub workflow in .github/workflows/windows-build.yml does this).
 """
@@ -35,6 +37,7 @@ def main() -> int:
         return 1
     data = [(cty, "data"),
             (ROOT / "tttlog" / "contests" / "rules", "tttlog/contests/rules"),
+            (ROOT / "tttlog" / "resources", "tttlog/resources"),
             (ROOT / "tests" / "fixtures" / "cty_sample.dat", "tests/fixtures")]
     scp = ROOT / "data" / "MASTER.SCP"
     if scp.exists():
@@ -64,8 +67,9 @@ def main() -> int:
     (folder / "README-FIRST.txt").write_text((ROOT / "docs" / "TESTERS.md").read_text(encoding="utf-8"),
                                              encoding="utf-8")
     zip_base = ROOT / "dist" / f"tttlog-{version()}-{plat}"
-    shutil.make_archive(str(zip_base), "zip", root_dir=folder.parent, base_dir=folder.name)
-    print(f"Built {folder}\nZip   {zip_base}.zip")
+    fmt = "gztar" if plat == "linux" else "zip"
+    out = shutil.make_archive(str(zip_base), fmt, root_dir=folder.parent, base_dir=folder.name)
+    print(f"Built {folder}\nArchive {out}")
     return 0
 
 

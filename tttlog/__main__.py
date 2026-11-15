@@ -1,6 +1,9 @@
 import sys
 
+from pathlib import Path
+
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from . import __version__
@@ -14,6 +17,10 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("tttlog")
     app.setApplicationVersion(__version__)
+    app.setDesktopFileName("tttlog")            # Linux: match tttlog.desktop for the taskbar icon
+    icon = Path(__file__).parent / "resources" / "tttlog.svg"
+    if icon.exists():
+        app.setWindowIcon(QIcon(str(icon)))
     w = MainWindow()
     w.show()
     if "--smoke-test" in sys.argv:
