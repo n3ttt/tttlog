@@ -23,6 +23,7 @@ include = ["tttlog*"]
 
 [tool.setuptools.package-data]
 "tttlog.contests" = ["rules/*.yaml"]
+"tttlog.resources" = ["*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
