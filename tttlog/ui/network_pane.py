@@ -3,13 +3,18 @@
 How stations link up:
   * every few seconds each station broadcasts a small UDP "I'm here" beacon
     (network name, station name, contest, TCP port) on udp_port;
-  * a station that hears a beacon from the same network name and contest dials
-    it over TCP; stations you add by hand (host or host:port) are dialed too;
+  * a station that hears a beacon from the same network name dials it over TCP;
+    stations you add by hand (host or host:port) are dialed too;
+  * stations on different contests (or with no log open) still link, for talk,
+    status and the shared DX cluster, but their logs are NOT shared, and both
+    sides get a warning;
   * on a new link both sides say hello with a vector of what they have, then
     send each other what's missing (see core/netsync.py); after that every new
     QSO, edit and delete is sent as it happens, and passed on to the others;
   * stations also send their status (op, band, frequency, mode, run/S&P) and
-    short talk messages, which are passed on as well.
+    short talk messages, which are passed on as well;
+  * one station connected to the DX cluster can share it: its cluster text goes
+    to the others, and their commands and spots go back out through it.
 
 Messages are JSON, one per line. Nothing blocks the entry line.
 """
@@ -70,6 +75,7 @@ class Link(QObject):
         sock.setParent(self)
         self.peer_id = ""
         self.ready = False                 # hello received and accepted
+        self.share = False                 # same contest: log events flow over this link
         self.dead = False
         self._graceful = False
         self._buf = b""
@@ -134,6 +140,9 @@ class NetNode(QObject):
     peersChanged = Signal()
     talkReceived = Signal(str, str)        # from station, text
     stateChanged = Signal(str)
+    contestWarning = Signal(str)           # a linked station is on another contest
+    clusterLines = Signal(str, list)       # shared cluster text: (source station name, lines)
+    clusterCommand = Signal(str, str)      # (from station, command) for our cluster connection
 
     def __init__(self, node_id: str, parent=None):
         super().__init__(parent)
@@ -161,6 +170,8 @@ class NetNode(QObject):
         # signal handlers. This timer belongs to the node, so it can't fire
         # after the node (and its links) are gone.
         self._dead: list[Link] = []
+        self.cluster_up = False            # we're connected to a DX cluster and share it
+        self._warned: set[tuple] = set()   # (peer, contest) already warned about
         self._reaper = QTimer(self, singleShot=True, interval=0, timeout=self._reap)
 
     # ------------------------------------------------------------ control
@@ -213,6 +224,7 @@ class NetNode(QObject):
     def set_log(self, sync: LogSync | None, contest: str) -> None:
         """A log was opened: relink so everyone swaps what's missing for this log."""
         self.sync, self.contest = sync, contest
+        self._warned.clear()
         for l in list(self.links):
             l.close()
         self._last_dial.clear()
@@ -231,29 +243,67 @@ class NetNode(QObject):
 
     # ------------------------------------------------------------ sending
     def publish(self, ev: dict) -> None:
-        """A local QSO / edit / delete: tell every station."""
-        self._send_all({"t": "ev", "e": ev})
+        """A local QSO / edit / delete: tell every station on the same contest."""
+        self._send_all({"t": "ev", "e": ev}, log_only=True)
 
-    def set_status(self, status: dict) -> None:
+    # -- shared DX cluster ----------------------------------------------------
+    def publish_cluster(self, lines: list[str]) -> None:
+        """Text from our cluster connection, for stations using it."""
+        if not lines:
+            return
+        mid = uuid.uuid4().hex
+        self._remember(mid)
+        self._send_all({"t": "cl", "id": mid, "o": self.node_id, "name": self.name, "lines": lines})
+
+    def cluster_source(self) -> dict | None:
+        """The station whose cluster connection we'd use: online, sharing, lowest id."""
+        now = time.monotonic()
+        live = [(pid, p) for pid, p in self.peers.items()
+                if p.get("status", {}).get("cl") and now - p.get("heard", 0) < PEER_STALE_S]
+        if not live:
+            return None
+        pid, p = min(live)
+        return {"id": pid, "name": p["name"]}
+
+    def send_cluster_command(self, text: str) -> str | None:
+        """Send a command (or a spot) out through the sharing station. Returns its name."""
+        src = self.cluster_source()
+        if not src:
+            return None
+        mid = uuid.uuid4().hex
+        self._remember(mid)
+        self._send_all({"t": "clc", "id": mid, "to": src["id"], "o": self.node_id,
+                        "name": self.name, "text": text[:400]})
+        return src["name"]
+
+    def set_status(self, status: dict, now: bool = False) -> None:
         changed = status != self.status
         self.status = dict(status)
-        if changed and time.monotonic() - self._status_sent > 1:
+        if changed and (now or time.monotonic() - self._status_sent > 1):
             self._send_status()
+
+    def set_cluster_up(self, up: bool) -> None:
+        """We connected to / dropped the cluster: tell the others straight away."""
+        if up != self.cluster_up:
+            self.cluster_up = up
+            if self.links:
+                self._send_status()
 
     def talk(self, text: str) -> None:
         mid = uuid.uuid4().hex
         self._remember(mid)
         self._send_all({"t": "talk", "id": mid, "o": self.node_id, "name": self.name, "text": text})
 
-    def _send_all(self, msg: dict, skip: Link | None = None) -> None:
+    def _send_all(self, msg: dict, skip: Link | None = None, log_only: bool = False) -> None:
         for l in self.links:
-            if l.ready and l is not skip:
+            if l.ready and l is not skip and (l.share or not log_only):
                 l.send(msg)
 
     def _status_msg(self) -> dict:
         self._status_n += 1
         return {"t": "st", "o": self.node_id, "b": self._boot, "n": self._status_n, "name": self.name,
-                "contest": self.contest, "clock": datetime.now(timezone.utc).isoformat(), **self.status}
+                "contest": self.contest, "clock": datetime.now(timezone.utc).isoformat(),
+                **self.status, "cl": self.cluster_up}
 
     def _send_status(self) -> None:
         self._status_sent = time.monotonic()
@@ -300,7 +350,7 @@ class NetNode(QObject):
             host = _host(dg.senderAddress())
             p = self._peer(m["node"], m.get("name", "?"))
             p.update(contest=m.get("contest", ""), host=host, port=m["port"], heard=time.monotonic())
-            if not p.get("direct") and m.get("contest") == self.contest and self.sync:
+            if not p.get("direct"):
                 self._dial(host, m["port"])
             self.peersChanged.emit()
 
@@ -359,10 +409,9 @@ class NetNode(QObject):
             if hp:
                 targets.add(hp)
         linked_addrs = {(p.get("host"), p.get("port")) for p in self.peers.values() if p.get("direct")}
-        if self.sync:
-            for host, port in targets:
-                if (host, port) not in linked_addrs:
-                    self._dial(host, port)
+        for host, port in targets:
+            if (host, port) not in linked_addrs:
+                self._dial(host, port)
         if self.links and now - self._status_sent >= STATUS_EVERY_S:
             self._send_status()
         self.peersChanged.emit()
@@ -393,18 +442,35 @@ class NetNode(QObject):
             return False
         if not link.ready:
             return False
-        if t == "ev" and self.sync and isinstance(m.get("e"), dict):
+        if t == "ev" and self.sync and link.share and isinstance(m.get("e"), dict):
             new, changed = self.sync.apply(m["e"])
             if new:
-                self._send_all(m, skip=link)       # pass it on
+                self._send_all(m, skip=link, log_only=True)       # pass it on
             return changed
+        if t == "cl" and isinstance(m.get("id"), str) and m["id"] not in self._seen_set:
+            self._remember(m["id"])
+            self._send_all(m, skip=link)
+            src = self.cluster_source()
+            lines = m.get("lines")
+            if src and src["id"] == m.get("o") and isinstance(lines, list):
+                self.clusterLines.emit(src["name"], [str(x)[:500] for x in lines[:200]])
+            return False
+        if t == "clc" and isinstance(m.get("id"), str) and m["id"] not in self._seen_set:
+            self._remember(m["id"])
+            if m.get("to") == self.node_id:
+                if self.cluster_up and isinstance(m.get("text"), str):
+                    self.clusterCommand.emit(str(m.get("name", "?"))[:16], m["text"][:400])
+            else:
+                self._send_all(m, skip=link)
+            return False
         if t == "st" and isinstance(m.get("o"), str) and m["o"] != self.node_id:
             p = self._peer(m["o"], str(m.get("name", "?")))
             # (b = that station's run id, so a restarted station's count starting over is accepted)
             if isinstance(m.get("n"), int) and (m.get("b") != p.get("b") or m["n"] > p["n"]):
                 p["n"], p["b"] = m["n"], m.get("b")
-                p["status"] = {k: m.get(k) for k in ("op", "band", "freq", "mode", "run", "qsos")}
+                p["status"] = {k: m.get(k) for k in ("op", "band", "freq", "mode", "run", "qsos", "cl")}
                 p["contest"] = m.get("contest", "")
+                self._check_contest(m["o"], p)
                 p["heard"] = time.monotonic()
                 if m["o"] == link.peer_id:
                     p["clock_off"] = _clock_offset(m.get("clock"))
@@ -428,16 +494,9 @@ class NetNode(QObject):
             link.close(); return
         p = self._peer(pid, str(m.get("name", "?"))[:16])
         p.update(contest=m.get("contest", ""), host=link.addr[0], port=m.get("port"), heard=time.monotonic())
-        why = ""
         if m.get("net") != self.cfg.get("net_name"):
-            why = "different network name"
-        elif not self.sync or not m.get("contest"):
-            why = "no log open"
-        elif m.get("contest") != self.contest:
-            why = f"different contest ({m.get('contest')})"
-        if why:
-            p["note"] = why
-            link.send({"t": "bye", "why": why})
+            p["note"] = "different network name"
+            link.send({"t": "bye", "why": p["note"]})
             link.close(graceful=True)
             self.peersChanged.emit()
             return
@@ -449,15 +508,45 @@ class NetNode(QObject):
                 link.close(); return
             other.close()
         link.peer_id, link.ready = pid, True
+        # Same contest and both have a log open: share the log. Otherwise stay
+        # linked (talk, status, cluster) but keep the logs apart, and warn.
+        link.share = bool(self.sync and m.get("contest") and m.get("contest") == self.contest)
         p.update(direct=True, note="")
         if isinstance(m.get("port"), int):
             self._known.add((link.addr[0], m["port"]))
         link.send(self._status_msg())
-        vec = m.get("vector") if isinstance(m.get("vector"), dict) else {}
-        for ev in self.sync.events_after(vec):
-            link.send({"t": "ev", "e": ev})
+        if link.share:
+            vec = m.get("vector") if isinstance(m.get("vector"), dict) else {}
+            for ev in self.sync.events_after(vec):
+                link.send({"t": "ev", "e": ev})
+        self._check_contest(pid, p)
         self.peersChanged.emit()
         self.stateChanged.emit(self.summary())
+
+    def mismatch(self, p: dict) -> str:
+        """Why this station's log isn't shared with ours ('' if it is / can't tell)."""
+        theirs = p.get("contest", "")
+        if not self.contest:
+            return "you have no log open: log not shared"
+        if not theirs:
+            return "no log open: log not shared"
+        if theirs != self.contest:
+            return f"on {theirs}: log not shared"
+        return ""
+
+    def _check_contest(self, pid: str, p: dict) -> None:
+        why = self.mismatch(p)
+        # A linked station switched to (or away from) our contest: relink, so the
+        # hello decides sharing again and swaps whatever is missing.
+        for l in self.links:
+            if l.ready and l.peer_id == pid and l.share != (not why) and self.contest and p.get("contest"):
+                l.close()
+        if why and self.contest and p.get("contest"):
+            key = (pid, p.get("contest"))
+            if key not in self._warned:
+                self._warned.add(key)
+                self.contestWarning.emit(f"{p['name']} is logging {p['contest']}, you're on {self.contest}. "
+                                         f"Logs are NOT shared until both stations open the same contest.")
 
     def _remember(self, mid: str) -> None:
         if len(self._seen) == self._seen.maxlen:
@@ -536,6 +625,11 @@ class NetworkPane(QWidget):
                 link = "seen" if not st else "via others"
             else:
                 link = "offline"
+            warn = p.get("warn", "") if p is not me and online else ""
+            if warn:
+                link = warn
+            if st.get("cl"):
+                link += " · shares cluster"
             off = p.get("clock_off")
             if off is not None and abs(off) > 60:
                 link += f" · clock {off:+.0f}s"
@@ -548,7 +642,11 @@ class NetworkPane(QWidget):
                     and st.get("mode") == mine.get("mode"))
             for c, val in enumerate(vals):
                 it = QTableWidgetItem(val)
-                if same:
+                if warn:
+                    it.setBackground(QBrush(QColor("#ff9f9f")))
+                    it.setForeground(QBrush(QColor("black")))
+                    it.setToolTip(f"{p['name']}: {warn}")
+                elif same:
                     it.setBackground(QBrush(QColor("#ffd166")))
                     it.setForeground(QBrush(QColor("black")))
                     it.setToolTip("Same band and mode as you")
