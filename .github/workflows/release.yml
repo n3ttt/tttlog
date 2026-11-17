@@ -1,11 +1,12 @@
-# Push a tag like v0.1.0a3 -> builds Mac (Apple Silicon + Intel), Windows and Linux,
-# then publishes them on the GitHub Releases page. The in-app updater
-# (Help > Check for updates) reads these releases.
+# Publish a release on GitHub (Releases > Draft a new release, tag e.g. v0.1.0a3,
+# "Set as a pre-release" for alphas) -> this builds Mac (Apple Silicon + Intel),
+# Windows and Linux and attaches them to that release.
+# The in-app updater (Help > Check for updates) reads these releases.
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -27,8 +28,7 @@ jobs:
           path: out
           merge-multiple: true
       - run: ls -la out
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: out/*
-          generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
+      - name: Attach builds to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" out/* --clobber --repo "${{ github.repository }}"
