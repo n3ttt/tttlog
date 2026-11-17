@@ -47,6 +47,11 @@ DEFAULT_CLUSTER = {
     "auto_connect": False,    # connect when tttlog starts
     "auto_spot_sp": False,    # spot each new S&P QSO (call + frequency) to the cluster
     "init_commands": [],      # sent once after login, e.g. ["set/skimmer", "sh/dx 30"]
+    "cluster_type": "auto",   # auto | ar | cc | spider: which filter commands to send
+    "spot_filter": {"spotters": "any", "zones": [], "skimmer": "all"},
+    "auto_send_filter": False,  # send the filter to the cluster whenever it changes
+    "share_cluster": True,    # let networked stations use my cluster connection
+    "use_network_cluster": True,  # when I'm not connected, use a networked station's
 }
 
 # Macro text: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are substituted.

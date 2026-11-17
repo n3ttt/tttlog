@@ -9,13 +9,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor
 from PySide6.QtNetwork import QAbstractSocket, QTcpSocket
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView,
-                               QLabel, QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy,
-                               QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QInputDialog,
+                               QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSizePolicy,
+                               QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
-from ..core.cluster import LOGIN_RE, Spot, SpotList, split_telnet
+from ..core.cluster import (DEFAULT_FILTER, LOGIN_RE, SKIMMER_CHOICES, SPOTTER_CHOICES, Home, Spot,
+                            SpotList, describe_filter, filter_zones, spot_passes, split_telnet)
 from .widgets import StateToggle, text_color_for
 
 RECONNECT_MS = 30_000
@@ -158,12 +159,17 @@ class SpotsPane(QWidget):
     spotActivated = Signal(object)          # Spot; later this will also tune the radio
     colorsChanged = Signal()
     spotLastRequested = Signal()            # "Spot last QSO" button
+    filterChanged = Signal()                # local spot filter changed (save it)
+    filterSendRequested = Signal()          # "Send this filter to the cluster"
 
     def __init__(self, colors: dict, parent=None):
         super().__init__(parent)
         self.colors = colors
         self.spots = SpotList()
         self.current_band: str | None = None
+        self.spot_filter: dict = dict(DEFAULT_FILTER)
+        self.home = Home(zone=0)
+        self.auto_send_filter = False
         v = QVBoxLayout(self)
         v.setContentsMargins(4, 4, 4, 4)
 
@@ -193,7 +199,15 @@ class SpotsPane(QWidget):
         self.search.setStyleSheet("font: 11pt;")
         self.search.setMinimumWidth(80)
         self.search.textChanged.connect(self.refresh)
-        bar2.addWidget(self.spot_btn); bar2.addWidget(self.band_box); bar2.addWidget(self.search, 1)
+        self.filter_btn = QToolButton(text="Filter")
+        self.filter_btn.setPopupMode(QToolButton.InstantPopup)
+        self.filter_btn.setFocusPolicy(Qt.NoFocus)
+        self.filter_btn.setToolTip("Which spotters and skimmers to show")
+        self.filter_menu = QMenu(self)
+        self.filter_menu.aboutToShow.connect(self._build_filter_menu)
+        self.filter_btn.setMenu(self.filter_menu)
+        bar2.addWidget(self.spot_btn); bar2.addWidget(self.band_box); bar2.addWidget(self.filter_btn)
+        bar2.addWidget(self.search, 1)
         v.addLayout(bar2)
 
         self.summary_lbl = QLabel()
@@ -237,6 +251,76 @@ class SpotsPane(QWidget):
             t.sync()
         self._on_toggle()
 
+    # -- spot filter (spotter location, skimmers) ----------------------------
+    def set_filter(self, f: dict, home: Home | None = None):
+        self.spot_filter = {**DEFAULT_FILTER, **(f or {})}
+        if home is not None:
+            self.home = home
+        active = bool(describe_filter(self.spot_filter, self.home))
+        self.filter_btn.setText("Filter ●" if active else "Filter")
+        self._schedule_refresh()
+
+    def _change_filter(self, **kw):
+        self.set_filter({**self.spot_filter, **kw})
+        self.filterChanged.emit()
+        if self.auto_send_filter:
+            self.filterSendRequested.emit()
+
+    def cycle_spotters(self):
+        order = ["any", "zone", "cont"]
+        cur = self.spot_filter.get("spotters", "any")
+        self._change_filter(spotters=order[(order.index(cur) + 1) % len(order)] if cur in order else "any")
+
+    def cycle_skimmer(self):
+        order = ["all", "no", "only"]
+        cur = self.spot_filter.get("skimmer", "all")
+        self._change_filter(skimmer=order[(order.index(cur) + 1) % 3] if cur in order else "all")
+
+    def _ask_zones(self):
+        cur = ",".join(map(str, filter_zones({**self.spot_filter, "spotters": "zones"}, self.home)))
+        text, ok = QInputDialog.getText(self, "Spotter CQ zones", "CQ zones (e.g. 3,4,5):",
+                                        text=cur or str(self.home.zone))
+        if ok:
+            zones = sorted({int(z) for z in text.replace(" ", ",").split(",") if z.isdigit() and 1 <= int(z) <= 40})
+            if zones:
+                self._change_filter(spotters="zones", zones=zones)
+
+    def _build_filter_menu(self):
+        m = self.filter_menu
+        m.clear()
+        h = self.home
+        labels = dict(SPOTTER_CHOICES)
+        labels["zone"] = f"Spotters in my CQ zone ({h.zone})"
+        if h.cont:
+            labels["cont"] = f"Spotters on my continent ({h.cont})"
+        if h.country:
+            labels["country"] = f"Spotters in my country ({h.country})"
+        zones = filter_zones({**self.spot_filter, "spotters": "zones"}, h)
+        labels["zones"] = "Spotters in CQ zones " + ",".join(map(str, zones)) + "…" if zones else "Spotters in CQ zones…"
+        g1 = QActionGroup(m)
+        for key, text in labels.items():
+            a = QAction(text, m, checkable=True, checked=self.spot_filter.get("spotters") == key)
+            a.triggered.connect(self._ask_zones if key == "zones" else (lambda _=False, k=key: self._change_filter(spotters=k)))
+            g1.addAction(a); m.addAction(a)
+        m.addSeparator()
+        g2 = QActionGroup(m)
+        for key, text in SKIMMER_CHOICES.items():
+            a = QAction(text, m, checkable=True, checked=self.spot_filter.get("skimmer") == key)
+            a.triggered.connect(lambda _=False, k=key: self._change_filter(skimmer=k))
+            g2.addAction(a); m.addAction(a)
+        m.addSeparator()
+        send = QAction("Send this filter to the cluster", m)
+        send.triggered.connect(self.filterSendRequested)
+        m.addAction(send)
+        auto = QAction("Keep the cluster's filter matched (send on every change)", m, checkable=True,
+                       checked=self.auto_send_filter)
+        auto.toggled.connect(lambda on: (setattr(self, "auto_send_filter", on), self.filterChanged.emit()))
+        m.addAction(auto)
+
+    def filtered_spots(self) -> list[Spot]:
+        """Spots that pass the spotter / skimmer filter (newest first)."""
+        return [s for s in self.spots.spots() if spot_passes(s, self.spot_filter, self.home)]
+
     # -- data in ----------------------------------------------------------
     def add_spot(self, s: Spot, engine, log):
         self.spots.add(s)
@@ -262,7 +346,7 @@ class SpotsPane(QWidget):
         band_only = self.band_box.currentIndex() == 1
         q = self.search.text().strip().upper()
         out = []
-        for s in self.spots.spots():
+        for s in self.filtered_spots():
             key = STATUS_KEY.get(s.status, "spot_dupe")
             if not self.colors[key].get("show", True):
                 continue
@@ -289,10 +373,16 @@ class SpotsPane(QWidget):
                 it.setBackground(QBrush(QColor(bg)))
                 it.setForeground(QBrush(QColor(text_color_for(bg))))
                 t.setItem(r, c, it)
-        all_ = self.spots.spots()
+        all_ = self.filtered_spots()
         n_mult = sum(1 for s in all_ if s.status == "MULT")
         n_q = sum(1 for s in all_ if s.status == "Q")
-        self.summary_lbl.setText(f"{n_mult} mults · {n_q} Qs available · {len(all_)} spots")
+        text = f"{n_mult} mults · {n_q} Qs available · {len(all_)} spots"
+        desc = describe_filter(self.spot_filter, self.home)
+        if desc:
+            hidden = len(self.spots) - len(all_)
+            text += f" · filter: {desc} ({hidden} hidden)"
+        self.summary_lbl.setText(text)
+        self.summary_lbl.setToolTip(text)
 
     def _activate_row(self, index):
         if 0 <= index.row() < len(self._shown):
