@@ -31,6 +31,7 @@ from .network_pane import NetNode, NetworkPane
 from .rate_pane import RatePane
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
+DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
 LAYOUT_VERSION = "6"     # bump when panes are added/renamed so old saved layouts are dropped
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 OP_RE = re.compile(r"^[A-Z0-9]{3,}(/[A-Z0-9]+)*$")
@@ -79,6 +80,7 @@ class MainWindow(QMainWindow):
         elif self.screen() is not None:              # first run: use most of the screen
             avail = self.screen().availableGeometry()
             self.resize(int(avail.width() * 0.92), int(avail.height() * 0.9))
+        self._fit_to_screen()
         st = self.settings.value("window_state")
         if str(self.settings.value("layout_version", "")) != LAYOUT_VERSION:
             st = None                                # panes changed: start from the default layout
@@ -116,6 +118,8 @@ class MainWindow(QMainWindow):
         self.radio_lbl = QLabel(objectName="radio")
         self.clock_lbl = QLabel()
         self.score_lbl = QLabel("Score 0", objectName="score")
+        for lbl in (self.radio_lbl, self.score_lbl):          # wrap rather than widen the window
+            lbl.setWordWrap(True)
         top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
         v.addLayout(top)
@@ -148,6 +152,8 @@ class MainWindow(QMainWindow):
             b = QPushButton()
             b.clicked.connect(lambda _=False, n=i: self.fkey(n))
             b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet("min-width: 30px")           # labels elide on a narrow pane
+            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             fk.addWidget(b, i // 6, i % 6)
             self.fbuttons.append(b)
         v.addLayout(fk)
@@ -162,7 +168,7 @@ class MainWindow(QMainWindow):
         v.setSpacing(4)
         w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.setDockNestingEnabled(True)
-        self._dock("Entry", w, Qt.LeftDockWidgetArea, closable=False)
+        self._dock("Entry", w, Qt.LeftDockWidgetArea, closable=False, scroll=False)   # sized to its contents
 
         # Log pane
         self.log_table = QTableWidget(0, 9)
@@ -230,8 +236,8 @@ class MainWindow(QMainWindow):
         self._net_dirty = QTimer(self, singleShot=True, interval=300, timeout=self._on_net_log_changed)
         self._dock("Network", self.network_pane, Qt.RightDockWidgetArea)
 
-    def _dock(self, title, widget, area, closable=True):
-        d = Pane(title, widget, self, closable=closable)
+    def _dock(self, title, widget, area, closable=True, scroll=True):
+        d = Pane(title, widget, self, closable=closable, scroll=scroll)
         self.addDockWidget(area, d)
         setattr(self, f"dock_{title.replace(' ', '_').lower()}", d)
         return d
@@ -297,6 +303,14 @@ class MainWindow(QMainWindow):
         view.addAction(QAction("Restore all panes", self, shortcut="Ctrl+Shift+R",
                                triggered=self.restore_all_panes))
         view.addAction(QAction("Dock all pop-out windows", self, triggered=self.dock_all_panes))
+        view.addSeparator()
+        self.scale_menu = view.addMenu("Display size")
+        cur = int(self.settings.value("ui_scale", 100) or 100)
+        for pct in DISPLAY_SIZES:
+            a = QAction(f"{pct}%" + ("  (normal)" if pct == 100 else ""), self, checkable=True,
+                        checked=pct == cur, triggered=lambda _=False, p=pct: self.set_display_size(p))
+            a.setData(pct)
+            self.scale_menu.addAction(a)
         hlp = mb.addMenu("&Help")
         hlp.addAction(QAction("About tttlog…", self, triggered=self.show_about))
 
@@ -350,7 +364,7 @@ class MainWindow(QMainWindow):
         page = self.macros.get(self.mode, self.macros.get("SSB"))["RUN" if self.run_mode else "SP"]
         for i, b in enumerate(self.fbuttons):
             m = page[i] if i < len(page) else {"label": ""}
-            b.setText(f"F{i + 1} {m.get('label', '')}")
+            b.setText(f"F{i + 1} {m.get('label', '')}"); b.setToolTip(b.text())
         if self.engine:
             self.sent_lbl.setText(f"Sent: {self.engine.default_rst(self.mode)} {self.engine.sent_exchange()}")
         self.settings.setValue("freq_khz", self.freq_khz)
@@ -942,8 +956,35 @@ class MainWindow(QMainWindow):
         left = self.width() * 62 // 100
         self.resizeDocks([self.dock_log, self.dock_spots], [left * 2 // 5, left * 3 // 5], Qt.Horizontal)
         self.resizeDocks([self.dock_entry], [left], Qt.Horizontal)
-        self.resizeDocks(right, [215, 120, max(300, self.height() - 335)], Qt.Vertical)
-        self.resizeDocks([self.dock_entry], [self.dock_entry.widget().sizeHint().height() + 24], Qt.Vertical)
+        h = self.height()                               # small screens: shrink Score/Partial first
+        self.resizeDocks(right, [min(215, h * 28 // 100), min(120, h * 16 // 100),
+                                 max(150, h - min(215, h * 28 // 100) - min(120, h * 16 // 100) - 40)],
+                         Qt.Vertical)
+        self.resizeDocks([self.dock_entry], [self.dock_entry.content.sizeHint().height() + 24], Qt.Vertical)
+
+    def _fit_to_screen(self):
+        """Keep the window on a screen it fits: a layout saved on a big monitor
+        (or a bigger display size) mustn't open off the edge of a small one."""
+        scr = self.screen()
+        if scr is None or self.isMaximized() or self.isFullScreen():
+            return
+        avail = scr.availableGeometry()
+        # leave room for the title bar, which isn't part of geometry() before show()
+        w = min(self.width(), avail.width())
+        h = min(self.height(), avail.height() - 32)
+        if (w, h) != (self.width(), self.height()):
+            self.resize(w, h)
+        x = min(max(self.x(), avail.left()), avail.right() - w + 1)
+        y = min(max(self.y(), avail.top()), avail.bottom() - h - 31)
+        if (x, y) != (self.x(), self.y()):
+            self.move(x, max(y, avail.top()))
+
+    def set_display_size(self, pct: int):
+        self.settings.setValue("ui_scale", pct)
+        for a in self.scale_menu.actions():
+            a.setChecked(a.data() == pct)
+        QMessageBox.information(self, "Display size",
+                                f"Display size set to {pct}%. Quit and restart tttlog to apply it.")
 
     def minimize_all_panes(self):
         for d in self.panes:
