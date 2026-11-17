@@ -10,7 +10,7 @@ from tttlog.contests.engine import ContestEngine, Station, load_rules, list_cont
 from tttlog.export.adif import export_adif, import_adif
 from tttlog.export.cabrillo import export_cabrillo
 
-FIX = Path(__file__).parent / "fixtures" / "cty_sample.dat"
+FIX = Path(__file__).parents[1] / "tttlog" / "resources" / "cty_sample.dat"
 T0 = datetime(2027, 3, 6, 0, 1, tzinfo=timezone.utc)
 
 

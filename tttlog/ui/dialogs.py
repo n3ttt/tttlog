@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog
 
 from ..contests.engine import Station, list_contests
 from ..core.models import QSO
+from ..paths import LOG_DIR
 
 
 def _buttons(dlg):
@@ -72,7 +73,7 @@ class NewLogDialog(QDialog):
         self._default_path()
 
     def _default_path(self):
-        d = Path.home() / "Documents" / "tttlog"
+        d = LOG_DIR
         cid = self.contest.currentData() or "log"
         self.path.setText(str(d / f"{cid}_{datetime.utcnow():%Y%m%d}.db"))
 

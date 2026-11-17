@@ -1,7 +1,7 @@
 """Callsign -> DXCC entity / CQ zone lookup from AD1C's cty.dat.
 
-Get the current file with `python scripts/update_cty.py` (downloads from
-country-files.com into data/cty.dat).
+The app downloads the current file into ~/.tttlog/data/cty.dat
+(Tools > Update country files, or automatically on first run).
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+from ..paths import DATA_DIR, RESOURCE_DIR
 
 # Suffixes after a slash that do NOT change the entity
 _IGNORE_SUFFIXES = {"P", "M", "MM", "AM", "QRP", "A", "B", "LH", "R"}
@@ -31,7 +31,13 @@ _OVERRIDE = re.compile(r"\((\d+)\)|\[(\d+)\]|<[^>]*>|\{(\w+)\}|~[^~]*~")
 
 class CtyDat:
     def __init__(self, path: str | Path | None = None):
-        path = Path(path) if path else DATA_DIR / "cty.dat"
+        if path is None:
+            live = DATA_DIR / "cty.dat"
+            path = live if live.exists() else RESOURCE_DIR / "cty_sample.dat"
+            self.is_sample = not live.exists()
+        else:
+            self.is_sample = False
+        path = Path(path)
         self.exact: dict[str, tuple[Entity, int | None]] = {}
         self.prefixes: dict[str, tuple[Entity, int | None]] = {}
         self._parse(path.read_text(encoding="latin-1"))

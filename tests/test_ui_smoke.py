@@ -1,6 +1,7 @@
 """Headless smoke test of the main window (QT_QPA_PLATFORM=offscreen)."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ["TTTLOG_OFFLINE"] = "1"
 
 import pytest
 from PySide6.QtWidgets import QApplication

@@ -1,15 +1,10 @@
-"""Download the latest AD1C cty.dat into data/cty.dat.
-
-Run before every contest:  python scripts/update_cty.py
-"""
-import urllib.request
+"""Download the latest cty.dat and MASTER.SCP into ~/.tttlog/data (same as Tools > Update country files)."""
+import sys
 from pathlib import Path
 
-URL = "https://www.country-files.com/cty/cty.dat"
-DEST = Path(__file__).resolve().parents[1] / "data" / "cty.dat"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tttlog.updater import update_data_files  # noqa: E402
 
 if __name__ == "__main__":
-    DEST.parent.mkdir(exist_ok=True)
-    with urllib.request.urlopen(URL, timeout=30) as r:
-        DEST.write_bytes(r.read())
-    print(f"Saved {DEST} ({DEST.stat().st_size:,} bytes)")
+    for line in update_data_files():
+        print(line)

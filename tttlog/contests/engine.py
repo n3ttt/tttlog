@@ -10,7 +10,7 @@ import yaml
 from ..core.cty import CtyDat
 from ..core.models import QSO
 
-RULES_DIR = Path(__file__).parent / "rules"
+from ..paths import RULES_DIR
 
 
 @dataclass

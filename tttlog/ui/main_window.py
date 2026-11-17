@@ -4,23 +4,26 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
+import os
+import threading
+
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QDockWidget, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QMainWindow, QMessageBox, QPushButton,
+                               QListWidget, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
                                QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
-from .. import config
+from .. import REPO, __version__, config, updater
 from ..contests.engine import ContestEngine, load_rules
-from ..core.cty import DATA_DIR, CtyDat
+from ..core.cty import CtyDat
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
 from ..export.adif import export_adif, import_adif
 from ..export.cabrillo import export_cabrillo
+from ..paths import DATA_DIR, LOG_DIR
 from .dialogs import EditQsoDialog, MacroDialog, NewLogDialog, StationDialog
 
-FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 
 STYLE = """
@@ -32,17 +35,35 @@ QPushButton { min-width: 78px; }
 """
 
 
+class _Bridge(QObject):
+    """Carries results from worker threads back to the GUI thread."""
+    done = Signal(object, object)          # (callback, result)
+
+
+def run_bg(bridge: _Bridge, fn, callback):
+    """Run fn() in a thread; call callback(result_or_exception) on the GUI thread."""
+    def work():
+        try:
+            res = fn()
+        except Exception as e:             # noqa: BLE001
+            res = e
+        bridge.done.emit(callback, res)
+    threading.Thread(target=work, daemon=True).start()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("tttlog")
+        self.setWindowTitle(f"tttlog {__version__}")
+        self.bridge = _Bridge()
+        self.bridge.done.connect(lambda cb, res: cb(res))
         self.resize(1100, 720)
         self.setStyleSheet(STYLE)
         self.settings = QSettings("N3TTT", "tttlog")
         self.station = config.load_station()
         self.macros = config.load_macros()
-        self.cty_missing = not (DATA_DIR / "cty.dat").exists()
-        self.cty = CtyDat(FIXTURE_CTY if self.cty_missing else None)
+        self.cty = CtyDat()
+        self.cty_missing = self.cty.is_sample
         self.log: Log | None = None
         self.engine: ContestEngine | None = None
         self.qsos: list[QSO] = []
@@ -69,8 +90,12 @@ class MainWindow(QMainWindow):
         last = self.settings.value("last_log")
         if last and Path(last).exists():
             self.open_log(Path(last))
-        if self.cty_missing:
-            self.banner("cty.dat missing: run  python scripts/update_cty.py  (using small test file)", "orange")
+        offline = bool(os.environ.get("TTTLOG_OFFLINE"))
+        if self.cty_missing and not offline:
+            self.banner("Downloading country files (cty.dat, MASTER.SCP)…", "orange")
+            self.update_data_files(quiet=True)
+        if not offline:
+            QTimer.singleShot(3000, self.auto_update_check)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -181,6 +206,15 @@ class MainWindow(QMainWindow):
         view = mb.addMenu("&View")
         for d in (self.dock_log, self.dock_score, self.dock_check_partial):
             view.addAction(d.toggleViewAction())
+        tools = mb.addMenu("&Tools")
+        tools.addAction(QAction("Update country files (cty.dat + MASTER.SCP)", self,
+                                triggered=lambda: self.update_data_files(quiet=False)))
+        hlp = mb.addMenu("&Help")
+        hlp.addAction(QAction("Check for updates…", self, triggered=lambda: self.check_updates(quiet=False)))
+        hlp.addAction(QAction("tttlog on GitHub", self,
+                              triggered=lambda: QDesktopServices.openUrl(QUrl(f"https://github.com/{REPO}"))))
+        # On macOS Qt moves "About" into the application menu automatically
+        hlp.addAction(QAction("About tttlog", self, triggered=self.about))
 
     def _build_shortcuts(self):
         for i in range(12):
@@ -239,7 +273,7 @@ class MainWindow(QMainWindow):
         self.open_log(path)
 
     def open_log_dialog(self):
-        p, _ = QFileDialog.getOpenFileName(self, "Open log", str(Path.home() / "Documents" / "tttlog"),
+        p, _ = QFileDialog.getOpenFileName(self, "Open log", str(LOG_DIR),
                                            "Log (*.db)")
         if p:
             self.open_log(Path(p))
@@ -257,7 +291,7 @@ class MainWindow(QMainWindow):
                                               for f in self.engine.rcvd_fields))
         self.qsos = self.engine.rescore(self.log.all())
         self.settings.setValue("last_log", str(path))
-        self.setWindowTitle(f"tttlog — {rules['name']} — {path.name}")
+        self.setWindowTitle(f"tttlog {__version__} — {rules['name']} — {path.name}")
         self._refresh_radio()
         self._refresh_log()
         self.call.setFocus()
@@ -505,6 +539,106 @@ class MainWindow(QMainWindow):
             q.contest_id = self.engine.rules["id"]
             self.log.add(q)
         self._rescore_and_persist(self.log.all())
+
+    # ---------------------------------------------------------- version / updates
+    def about(self):
+        from PySide6 import __version__ as qtver
+        import platform
+        QMessageBox.about(self, "About tttlog",
+                          f"<h3>tttlog {updater.version_string()}</h3>"
+                          f"<p>One-window contest logger · GPL-3.0<br>"
+                          f"<a href='https://github.com/{REPO}'>github.com/{REPO}</a></p>"
+                          f"<p>Python {platform.python_version()} · Qt {qtver} · "
+                          f"{platform.system()} {platform.machine()}<br>"
+                          f"Country file: {'sample (not downloaded)' if self.cty_missing else DATA_DIR / 'cty.dat'}</p>")
+
+    def update_data_files(self, quiet: bool):
+        def done(res):
+            if isinstance(res, Exception):
+                self.banner(f"Country file update failed: {res}", "#ffd166"); return
+            self.cty = CtyDat()
+            self.cty_missing = self.cty.is_sample
+            self.scp = self._load_scp()
+            if self.engine:
+                self.engine = ContestEngine(self.engine.rules, self.cty, self.station)
+                self._rescore_and_persist(self.qsos)
+            msg = " · ".join(res)
+            self.banner(msg, "" if "FAILED" not in msg else "#ffd166")
+            if not quiet:
+                QMessageBox.information(self, "Country files", "\n".join(res))
+        run_bg(self.bridge, updater.update_data_files, done)
+
+    def auto_update_check(self):
+        """Silent check at most once a day."""
+        import time
+        last = float(self.settings.value("last_update_check", 0) or 0)
+        if time.time() - last < 86400:
+            return
+        self.settings.setValue("last_update_check", time.time())
+        self.check_updates(quiet=True)
+
+    def check_updates(self, quiet: bool):
+        def done(rel):
+            if isinstance(rel, Exception) or rel is None:
+                if not quiet:
+                    QMessageBox.warning(self, "Updates", "Couldn't reach GitHub to check for updates.")
+                return
+            if not updater.is_newer(rel.version):
+                if not quiet:
+                    QMessageBox.information(self, "Updates",
+                                            f"You're up to date (tttlog {__version__}).")
+                return
+            box = QMessageBox(self)
+            box.setWindowTitle("Update available")
+            box.setText(f"<b>tttlog {rel.version}</b> is available (you have {__version__}).")
+            box.setInformativeText((rel.notes[:800] + "…") if len(rel.notes) > 800 else rel.notes)
+            go = box.addButton("Update now", QMessageBox.AcceptRole)
+            box.addButton("Later", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is go:
+                self.install_update(rel)
+        run_bg(self.bridge, updater.fetch_latest, done)
+
+    def install_update(self, rel):
+        kind = updater.install_kind()
+        if kind == "git":
+            self.banner("Updating from GitHub (git pull)…", "orange")
+
+            def done(res):
+                if isinstance(res, Exception):
+                    out = getattr(res, "output", "") or str(res)
+                    QMessageBox.warning(self, "Update failed", out[-1500:]); self.banner(""); return
+                if QMessageBox.question(self, "Updated", "Update installed. Restart tttlog now?") \
+                        == QMessageBox.Yes:
+                    updater.restart_app(); self.close()
+            run_bg(self.bridge, updater.update_git_checkout, done)
+            return
+        if not rel.asset_url:
+            QDesktopServices.openUrl(QUrl(rel.url)); return
+        dest_dir = Path.home() / "Downloads"
+        dest_dir.mkdir(exist_ok=True)
+        dest = dest_dir / rel.asset_name
+        prog = QProgressDialog(f"Downloading tttlog {rel.version}…", None, 0, 100, self)
+        prog.setWindowModality(Qt.WindowModal); prog.setMinimumDuration(0); prog.show()
+
+        def done(res):
+            prog.close()
+            if isinstance(res, Exception):
+                QMessageBox.warning(self, "Update failed", str(res)); return
+            if kind == "mac-app":
+                updater.stage_mac_update(res)
+                QMessageBox.information(self, "Update", "tttlog will now close, update, and reopen.")
+                self.close()
+                from PySide6.QtWidgets import QApplication
+                QApplication.quit()
+            else:
+                updater.reveal(res)
+                QMessageBox.information(self, "Update downloaded",
+                                        f"Saved {res.name} to Downloads. Unzip it over your current copy.")
+
+        def progress(done_b, total):
+            self.bridge.done.emit(lambda _: prog.setValue(int(done_b * 100 / total)), None)
+        run_bg(self.bridge, lambda: updater.download(rel.asset_url, dest, progress), done)
 
     # ---------------------------------------------------------- close
     def closeEvent(self, ev):

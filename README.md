@@ -3,24 +3,50 @@
 A one-window amateur radio contest logger for **macOS, Windows, and Linux**.
 Keyboard-first, with contest rules kept in files, and built so you never lose a QSO.
 
-> Status: **v0.1, milestone M0.** Logging, dupe and multiplier checks, scoring, editable F-keys, and ADIF/Cabrillo export all work.
+> Status: **v0.2.0.** Logging, dupe and multiplier checks, scoring, editable F-keys, ADIF/Cabrillo export, version info, and in-app updates all work.
 > Rig control and the voice keyer come in M1. First live target: **ARRL DX SSB, March 6–7, 2027**.
 
-## Quick start (macOS)
+## Install (macOS: the easy way)
+
+1. Download the `.dmg` from **[Releases](https://github.com/n3ttt/tttlog/releases/latest)**.
+   Pick `macos-arm64` for Apple Silicon (M1–M4) or `macos-x86_64` for Intel Macs.
+2. Open the DMG and drag **tttlog** into **Applications**.
+3. **First launch only:** the app isn't signed with an Apple Developer ID yet, so macOS will block it.
+   Open it once, then go to **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway**.
+   After that it opens normally, and in-app updates won't ask again.
+
+On first run the app downloads the country file (`cty.dat`) and `MASTER.SCP` by itself.
+
+Windows (`.zip`) and Linux (`.tar.gz`) builds are on the same Releases page.
+
+## Version & updates
+
+- **Help ▸ About tttlog** shows the version (and the git commit when running from source). `tttlog --version` prints it too.
+- tttlog checks GitHub once a day and offers updates. You can also check any time with **Help ▸ Check for updates…**
+  - **Mac app:** downloads the new DMG, swaps the app, and reopens it.
+  - **Running from source:** does `git pull` and reinstalls, then offers to restart.
+  - **Windows/Linux:** downloads the new build to your Downloads folder.
+- **Tools ▸ Update country files** refreshes `cty.dat` and `MASTER.SCP`. Do this before every contest.
+
+## Run from source (developers)
 
 ```bash
-brew install python@3.12 git            # skip if already installed
-git clone https://github.com/n3ttt/<repo>.git
-cd <repo>
-python3 -m venv .venv && source .venv/bin/activate
+git clone https://github.com/n3ttt/tttlog.git && cd tttlog
+python3 -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
-python scripts/update_cty.py            # latest country file (run before every contest)
-python -m tttlog                        # or just: tttlog
+python -m tttlog
 ```
 
-Windows and Linux use the same steps (Windows: `.venv\Scripts\activate`).
+## Making a release
 
-Optional: put a `MASTER.SCP` file in `data/` to get Super Check Partial suggestions.
+Bump `__version__` in `tttlog/__init__.py`, commit, then:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+GitHub Actions runs the tests, builds the Mac (Apple Silicon + Intel), Windows, and Linux apps, and publishes the release.
+Running copies will then offer the update.
 
 ## Operating
 
@@ -47,7 +73,7 @@ Included: `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`.
 
 ## Your settings
 
-Settings live in `~/.tttlog/`:
+Settings and downloaded data live in `~/.tttlog/` (`data/` holds cty.dat and MASTER.SCP). Logs are saved in `~/Documents/tttlog/`.
 - `station.yaml`: call, state, zones, club, and Cabrillo header info (Config ▸ Station profile)
 - `macros.yaml`: F-keys (Config ▸ Function-key macros)
 

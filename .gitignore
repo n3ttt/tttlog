@@ -11,3 +11,5 @@ dist/
 data/cty.dat
 data/MASTER.SCP
 .DS_Store
+*.spec
+dist/
