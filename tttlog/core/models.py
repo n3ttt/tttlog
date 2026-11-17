@@ -1,10 +1,11 @@
 """Core data model: one QSO."""
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 
-# Band edges in kHz (amateur HF + 6m). Used to derive band from frequency.
+# Band edges in kHz (amateur HF, 6m, 2m, 70cm). Used to derive band from frequency.
 BANDS_KHZ = [
     ("160m", 1800, 2000),
     ("80m", 3500, 4000),
@@ -17,6 +18,8 @@ BANDS_KHZ = [
     ("12m", 24890, 24990),
     ("10m", 28000, 29700),
     ("6m", 50000, 54000),
+    ("2m", 144000, 148000),
+    ("70cm", 420000, 450000),
 ]
 
 # Cabrillo mode codes
@@ -48,7 +51,9 @@ class QSO:
     station_call: str = ""         # our call used on air
     operator: str = ""
     contest_id: str = ""
-    id: int | None = None          # DB row id
+    id: int | None = None          # DB row id (local to this computer)
+    uid: str = ""                  # same on every networked station; set when first logged
+    station_name: str = ""         # which computer logged it (local network), e.g. "RUN1"
     # filled in by the contest engine
     country: str = ""
     cq_zone: int | None = None
@@ -66,6 +71,10 @@ class QSO:
 
     @classmethod
     def from_dict(cls, d: dict) -> "QSO":
-        d = dict(d)
+        d = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
         d["time_utc"] = datetime.fromisoformat(d["time_utc"])
         return cls(**d)
+
+
+def new_uid() -> str:
+    return uuid.uuid4().hex

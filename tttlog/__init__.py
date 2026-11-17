@@ -1,3 +1,2 @@
-"""tttlog - cross-platform one-window contest logger."""
-__version__ = "0.2.0"
-REPO = "n3ttt/tttlog"
+"""tttlog: one-window amateur radio contest logger."""
+__version__ = "0.1.0a3"

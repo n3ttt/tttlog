@@ -5,14 +5,13 @@ import copy
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-                               QFormLayout, QHBoxLayout, QLineEdit, QPushButton,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+                               QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
                                QSpinBox, QTableWidget, QTableWidgetItem, QVBoxLayout,
                                QDoubleSpinBox, QHeaderView)
 
 from ..contests.engine import Station, list_contests
 from ..core.models import QSO
-from ..paths import LOG_DIR
 
 
 def _buttons(dlg):
@@ -20,6 +19,39 @@ def _buttons(dlg):
     bb.accepted.connect(dlg.accept)
     bb.rejected.connect(dlg.reject)
     return bb
+
+
+class ClusterDialog(QDialog):
+    def __init__(self, cfg: dict, station_call: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("DX cluster")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.host = QLineEdit(str(cfg.get("host", "")))
+        self.port = QSpinBox(); self.port.setRange(1, 65535); self.port.setValue(int(cfg.get("port", 7373)))
+        self.login = QLineEdit(str(cfg.get("login", "")))
+        self.login.setPlaceholderText(f"{station_call}  (station call)")
+        self.age = QSpinBox(); self.age.setRange(5, 240); self.age.setSuffix(" min")
+        self.age.setValue(int(cfg.get("max_age_min", 30)))
+        self.auto = QCheckBox("Connect when tttlog starts")
+        self.auto.setChecked(bool(cfg.get("auto_connect", False)))
+        self.auto_spot = QCheckBox("Auto-spot QSOs made in S&&P (call + frequency)")
+        self.auto_spot.setChecked(bool(cfg.get("auto_spot_sp", False)))
+        self.init = QLineEdit("; ".join(cfg.get("init_commands", [])))
+        self.init.setPlaceholderText("e.g.  set/skimmer; sh/dx 30")
+        for lbl, w in [("Host", self.host), ("Port", self.port), ("Login call", self.login),
+                       ("Keep spots for", self.age), ("", self.auto), ("", self.auto_spot),
+                       ("Commands after login", self.init)]:
+            f.addRow(lbl, w)
+        f.addRow(_buttons(self))
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(host=self.host.text().strip(), port=self.port.value(),
+                   login=self.login.text().strip().upper(), max_age_min=self.age.value(),
+                   auto_connect=self.auto.isChecked(), auto_spot_sp=self.auto_spot.isChecked(),
+                   init_commands=[c.strip() for c in self.init.text().split(";") if c.strip()])
+        return out
 
 
 class StationDialog(QDialog):
@@ -56,7 +88,7 @@ class StationDialog(QDialog):
 class NewLogDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("New contest log")
+        self.setWindowTitle("New log")
         f = QFormLayout(self)
         self.contest = QComboBox()
         self._contests = list_contests()
@@ -66,16 +98,19 @@ class NewLogDialog(QDialog):
         browse = QPushButton("…")
         browse.clicked.connect(self._browse)
         row = QHBoxLayout(); row.addWidget(self.path); row.addWidget(browse)
-        f.addRow("Contest", self.contest)
+        f.addRow("Contest / log type", self.contest)
         f.addRow("Log file", row)
         f.addRow(_buttons(self))
         self.contest.currentIndexChanged.connect(self._default_path)
         self._default_path()
 
     def _default_path(self):
-        d = LOG_DIR
+        d = Path.home() / "Documents" / "tttlog"
         cid = self.contest.currentData() or "log"
-        self.path.setText(str(d / f"{cid}_{datetime.utcnow():%Y%m%d}.db"))
+        if cid == "GENERAL":                       # one general log you keep adding to
+            self.path.setText(str(d / "general_log.db"))
+        else:
+            self.path.setText(str(d / f"{cid}_{datetime.utcnow():%Y%m%d}.db"))
 
     def _browse(self):
         p, _ = QFileDialog.getSaveFileName(self, "Log file", self.path.text(), "Log (*.db)")
@@ -105,6 +140,10 @@ class MacroDialog(QDialog):
         self.table.setHorizontalHeaderLabels(self.COLS)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         v.addWidget(self.table)
+        hint = QLabel("Text fields: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are filled in.  "
+                      "Actions: {CLEAR} wipes the entry line, {SPOT} spots the last QSO to the cluster.")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
         v.addWidget(_buttons(self))
         self._cur = None
         self.mode.currentIndexChanged.connect(self._switch)
@@ -165,3 +204,47 @@ class EditQsoDialog(QDialog):
         q.rst_sent, q.rst_rcvd = self.rst_s.text().strip(), self.rst_r.text().strip()
         q.exch_sent, q.exch_rcvd = self.ex_s.text().upper().strip(), self.ex_r.text().upper().strip()
         return q
+
+
+class NetworkDialog(QDialog):
+    """Config ▸ Local network: share one log between computers in the shack."""
+
+    def __init__(self, cfg: dict, port_in_use: int = 0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Local network")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.enabled = QCheckBox("Share the log with other tttlog stations on this network")
+        self.enabled.setChecked(bool(cfg.get("enabled")))
+        self.name = QLineEdit(str(cfg.get("station_name", "")))
+        self.name.setMaxLength(16)
+        self.name.setPlaceholderText("e.g. RUN1, MULT, SHACK")
+        self.net = QLineEdit(str(cfg.get("net_name", "TTTLOG")))
+        self.net.setMaxLength(32)
+        self.tcp = QSpinBox(); self.tcp.setRange(1024, 65535); self.tcp.setValue(int(cfg.get("tcp_port", 12071)))
+        self.udp = QSpinBox(); self.udp.setRange(1024, 65535); self.udp.setValue(int(cfg.get("udp_port", 12070)))
+        self.peers = QLineEdit(", ".join(cfg.get("peers", [])))
+        self.peers.setPlaceholderText("only if stations don't find each other, e.g. 192.168.1.20, shack-pc:12071")
+        note = QLabel(
+            "Stations with the same network name and the same contest share one log:\n"
+            "every QSO, edit and delete shows up on all of them, and dupes count across stations.\n"
+            "Each station keeps a full copy, so a station that drops out catches up when it's back.\n"
+            "Windows will ask to allow tttlog through the firewall: allow it on Private networks."
+            + (f"\nListening now on port {port_in_use}." if port_in_use else ""))
+        note.setWordWrap(True)
+        f.addRow(self.enabled)
+        for lbl, w in [("This station's name", self.name), ("Network name", self.net),
+                       ("TCP port", self.tcp), ("Discovery (UDP) port", self.udp),
+                       ("Other stations by address", self.peers)]:
+            f.addRow(lbl, w)
+        f.addRow(note)
+        f.addRow(_buttons(self))
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(enabled=self.enabled.isChecked(),
+                   station_name=self.name.text().strip().upper() or out.get("station_name", ""),
+                   net_name=self.net.text().strip().upper() or "TTTLOG",
+                   tcp_port=self.tcp.value(), udp_port=self.udp.value(),
+                   peers=[p.strip() for p in self.peers.text().replace(";", ",").split(",") if p.strip()])
+        return out

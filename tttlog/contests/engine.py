@@ -10,7 +10,7 @@ import yaml
 from ..core.cty import CtyDat
 from ..core.models import QSO
 
-from ..paths import RULES_DIR
+RULES_DIR = Path(__file__).parent / "rules"
 
 
 @dataclass
@@ -31,8 +31,8 @@ def list_contests() -> list[dict]:
     out = []
     for p in sorted(RULES_DIR.glob("*.yaml")):
         r = yaml.safe_load(p.read_text())
-        out.append({"id": r["id"], "name": r["name"], "path": p})
-    return out
+        out.append({"id": r["id"], "name": r["name"], "path": p, "general": bool(r.get("general"))})
+    return sorted(out, key=lambda c: not c["general"])      # General log first
 
 
 def load_rules(contest_id: str) -> dict:
@@ -75,21 +75,40 @@ class ContestEngine:
             vals.append(str(getattr(self.station, src)) if src else f.get("default", ""))
         return " ".join(vals)
 
-    def default_rst(self) -> str:
-        return next((f.get("default", "59") for f in self.rules["exchange"]["rcvd"]
-                     if f["name"] == "rst"), "59")
+    @property
+    def is_general(self) -> bool:
+        """General (everyday) log: no dupes, no points, free-text exchange."""
+        return bool(self.rules.get("general"))
+
+    def default_rst(self, mode: str | None = None) -> str:
+        d = next((f.get("default", "59") for f in self.rules["exchange"]["rcvd"]
+                  if f["name"] == "rst"), "59")
+        if isinstance(d, dict):                    # per-mode defaults (599 on CW, 59 on phone)
+            return str(d.get((mode or "").upper(), d.get("default", "59")))
+        return str(d)
+
+    def exchange_required(self) -> bool:
+        return any(not f.get("optional") for f in self.rcvd_fields)
 
     def parse_rcvd(self, exch: str) -> dict:
         toks = exch.upper().split()
-        return {f["name"]: (toks[i] if i < len(toks) else "") for i, f in enumerate(self.rcvd_fields)}
+        out = {}
+        for i, f in enumerate(self.rcvd_fields):
+            if f.get("free"):                      # free text: takes the rest of the line
+                out[f["name"]] = " ".join(toks[i:])
+                break
+            out[f["name"]] = toks[i] if i < len(toks) else ""
+        return out
 
     def validate_rcvd(self, exch: str) -> list[str]:
         """Return a list of error strings (empty == valid)."""
         errs = []
         vals = self.parse_rcvd(exch)
         for f in self.rcvd_fields:
-            v = vals[f["name"]]
+            v = vals.get(f["name"], "")
             if not v:
+                if f.get("optional"):
+                    continue
                 errs.append(f"missing {f.get('label', f['name'])}")
             elif "pattern" in f and not re.match(f["pattern"], v):
                 errs.append(f"bad {f.get('label', f['name'])}: {v}")
@@ -109,6 +128,8 @@ class ContestEngine:
     # ---- dupes ----------------------------------------------------------
     def _dupe_key(self, q: QSO):
         rule = self.rules.get("dupe", "per_band")
+        if rule == "none":
+            return None
         if rule == "once":
             return (q.call.upper(),)
         if rule == "per_band_mode":
@@ -117,6 +138,8 @@ class ContestEngine:
 
     def is_dupe(self, call: str, band: str, mode: str, log: list[QSO]) -> bool:
         rule = self.rules.get("dupe", "per_band")
+        if rule == "none":
+            return False
         call = call.upper()
         for q in log:
             if q.is_dupe or q.call.upper() != call:
@@ -138,7 +161,8 @@ class ContestEngine:
             q.cq_zone = int(vals["cq_zone"])
         else:
             q.cq_zone = hit[1] if hit else None
-        q.is_dupe = any(self._dupe_key(p) == self._dupe_key(q) for p in prior if not p.is_dupe)
+        key = self._dupe_key(q)
+        q.is_dupe = key is not None and any(self._dupe_key(p) == key for p in prior if not p.is_dupe)
         q.points = 0 if (q.is_dupe or not self.is_valid(q)) else self._points(ent)
         return q
 
@@ -150,6 +174,8 @@ class ContestEngine:
 
     def _points(self, ent) -> int:
         p = self.rules["points"]
+        if p["type"] == "none":
+            return 0
         if p["type"] == "fixed":
             return int(p["value"])
         if p["type"] == "cqww":
@@ -178,6 +204,12 @@ class ContestEngine:
             key = (q.band, v) if m.get("scope", "per_band") == "per_band" else (v,)
             out.append((m.get("label", m["type"]), key))
         return out
+
+    def worked_before(self, call: str, log: list[QSO]) -> list[QSO]:
+        """Earlier QSOs with this call, newest first (general log banner)."""
+        call = call.upper()
+        return sorted((q for q in log if q.call.upper() == call),
+                      key=lambda q: q.time_utc, reverse=True)
 
     def is_new_mult(self, q: QSO, log: list[QSO]) -> list[str]:
         """Labels of mults this (annotated) QSO would add."""
@@ -217,7 +249,8 @@ class ContestEngine:
     def rescore(self, log: list[QSO]) -> list[QSO]:
         """Re-annotate every QSO in time order (after edits/deletes)."""
         done: list[QSO] = []
-        for q in sorted(log, key=lambda x: (x.time_utc, x.id or 0)):
+        # uid breaks ties the same way on every networked station (row ids differ)
+        for q in sorted(log, key=lambda x: (x.time_utc, x.uid, x.id or 0)):
             self.annotate(q, done)
             done.append(q)
         return done

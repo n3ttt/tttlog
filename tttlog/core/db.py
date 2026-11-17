@@ -10,7 +10,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from .models import QSO
+from .models import QSO, new_uid
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS qso (
@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS qso (
     rst_sent TEXT, rst_rcvd TEXT,
     exch_sent TEXT, exch_rcvd TEXT,
     station_call TEXT, operator TEXT, contest_id TEXT,
-    country TEXT, cq_zone INTEGER, points INTEGER, is_dupe INTEGER
+    country TEXT, cq_zone INTEGER, points INTEGER, is_dupe INTEGER,
+    uid TEXT, station_name TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_call_band ON qso(call, band);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -31,38 +32,64 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 FIELDS = ["time_utc", "call", "freq_khz", "band", "mode", "rst_sent", "rst_rcvd",
           "exch_sent", "exch_rcvd", "station_call", "operator", "contest_id",
-          "country", "cq_zone", "points", "is_dupe"]
+          "country", "cq_zone", "points", "is_dupe", "uid", "station_name"]
 
 
 class Log:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.journal_path = self.path.with_suffix(".journal")
+        self.durable = True        # False while taking in a batch from the network: sync once at the end
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring logs made by older versions up to date (adds the network columns)."""
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(qso)")}
+        for col in ("uid", "station_name"):
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE qso ADD COLUMN {col} TEXT")
+        for (rid,) in self.conn.execute("SELECT id FROM qso WHERE uid IS NULL OR uid=''").fetchall():
+            self.conn.execute("UPDATE qso SET uid=? WHERE id=?", (new_uid(), rid))
+        self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_uid ON qso(uid)")
 
     # ---- journal -------------------------------------------------------
     def _journal(self, action: str, payload: dict) -> None:
         with open(self.journal_path, "a", encoding="utf-8") as f:
             f.write(json.dumps({"action": action, **payload}) + "\n")
             f.flush()
-            os.fsync(f.fileno())
+            if self.durable:
+                os.fsync(f.fileno())
+
+    def flush_journal(self) -> None:
+        if self.journal_path.exists():
+            with open(self.journal_path, "a", encoding="utf-8") as f:
+                os.fsync(f.fileno())
+
+    def commit(self) -> None:
+        """Commit now, unless a network batch is in progress (it commits at the end)."""
+        if self.durable:
+            self.conn.commit()
 
     # ---- CRUD ----------------------------------------------------------
     def _row(self, q: QSO) -> list:
         return [q.time_utc.isoformat(), q.call.upper(), q.freq_khz, q.band, q.mode,
                 q.rst_sent, q.rst_rcvd, q.exch_sent, q.exch_rcvd, q.station_call,
-                q.operator, q.contest_id, q.country, q.cq_zone, q.points, int(q.is_dupe)]
+                q.operator, q.contest_id, q.country, q.cq_zone, q.points, int(q.is_dupe),
+                q.uid, q.station_name]
 
     def add(self, q: QSO) -> QSO:
+        if not q.uid:
+            q.uid = new_uid()
         cur = self.conn.execute(
             f"INSERT INTO qso ({','.join(FIELDS)}) VALUES ({','.join('?' * len(FIELDS))})",
             self._row(q))
         q.id = cur.lastrowid
         self._journal("add", q.to_dict())   # journal (with id) before commit
-        self.conn.commit()
+        self.commit()
         return q
 
     def update(self, q: QSO) -> None:
@@ -70,12 +97,16 @@ class Log:
         self._journal("update", q.to_dict())
         sets = ",".join(f"{f}=?" for f in FIELDS)
         self.conn.execute(f"UPDATE qso SET {sets} WHERE id=?", self._row(q) + [q.id])
-        self.conn.commit()
+        self.commit()
 
     def delete(self, qso_id: int) -> None:
         self._journal("delete", {"id": qso_id})
         self.conn.execute("DELETE FROM qso WHERE id=?", (qso_id,))
-        self.conn.commit()
+        self.commit()
+
+    def find_uid(self, uid: str) -> QSO | None:
+        r = self.conn.execute("SELECT * FROM qso WHERE uid=?", (uid,)).fetchone()
+        return self._from_row(r) if r else None
 
     def all(self) -> list[QSO]:
         rows = self.conn.execute("SELECT * FROM qso ORDER BY time_utc, id").fetchall()
@@ -91,7 +122,8 @@ class Log:
                    station_call=r["station_call"], operator=r["operator"],
                    contest_id=r["contest_id"], country=r["country"] or "",
                    cq_zone=r["cq_zone"], points=r["points"] or 0,
-                   is_dupe=bool(r["is_dupe"]))
+                   is_dupe=bool(r["is_dupe"]), uid=r["uid"] or "",
+                   station_name=r["station_name"] or "")
 
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, value))
@@ -130,5 +162,7 @@ class Log:
             if key in live:
                 q = live[key]
                 q.id = None
+                if q.uid and log.find_uid(q.uid):     # duplicated in the journal
+                    continue
                 log.add(q)
         return log

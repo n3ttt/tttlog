@@ -18,6 +18,7 @@ def _f(tag: str, val) -> str:
 def qso_to_adif(q: QSO) -> str:
     mode, submode = ADIF_MODE.get(q.mode.upper(), (q.mode.upper(), ""))
     t = q.time_utc
+    general = q.contest_id == "GENERAL"      # notes, not a contest exchange
     rec = (
         _f("CALL", q.call.upper())
         + _f("QSO_DATE", t.strftime("%Y%m%d"))
@@ -28,11 +29,12 @@ def qso_to_adif(q: QSO) -> str:
         + _f("SUBMODE", submode)
         + _f("RST_SENT", q.rst_sent)
         + _f("RST_RCVD", q.rst_rcvd)
-        + _f("STX_STRING", q.exch_sent)
-        + _f("SRX_STRING", q.exch_rcvd)
+        + _f("STX_STRING", "" if general else q.exch_sent)
+        + _f("SRX_STRING", "" if general else q.exch_rcvd)
+        + _f("COMMENT", q.exch_rcvd if general else "")
         + _f("STATION_CALLSIGN", q.station_call)
         + _f("OPERATOR", q.operator)
-        + _f("CONTEST_ID", q.contest_id)
+        + _f("CONTEST_ID", "" if general else q.contest_id)
         + _f("COUNTRY", q.country if q.country != "?" else "")
         + _f("CQZ", q.cq_zone)
     )
@@ -56,7 +58,8 @@ def export_adif(qsos: list[QSO], path: str | Path, program: str = "tttlog") -> i
 _TAG = re.compile(r"<(\w+):(\d+)(?::\w)?>", re.I)
 
 
-def import_adif(path: str | Path) -> list[QSO]:
+def import_adif(path: str | Path, general: bool = False) -> list[QSO]:
+    """Read QSOs. general=True fills the notes from NAME / QTH / COMMENT."""
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     eoh = re.search(r"<eoh>", text, re.I)
     body = text[eoh.end():] if eoh else text
@@ -74,10 +77,13 @@ def import_adif(path: str | Path) -> list[QSO]:
         mode = fields.get("SUBMODE") or fields.get("MODE", "SSB")
         if mode.upper() in ("USB", "LSB"):
             mode = "SSB"
+        rcvd = fields.get("SRX_STRING", "")
+        if general and not rcvd:
+            rcvd = " ".join(fields[k] for k in ("NAME", "QTH", "COMMENT") if fields.get(k))
         out.append(QSO(
             call=fields["CALL"], freq_khz=float(fields.get("FREQ", "0") or 0) * 1000,
             mode=mode, rst_sent=fields.get("RST_SENT", ""), rst_rcvd=fields.get("RST_RCVD", ""),
-            exch_sent=fields.get("STX_STRING", ""), exch_rcvd=fields.get("SRX_STRING", ""),
+            exch_sent=fields.get("STX_STRING", ""), exch_rcvd=rcvd,
             time_utc=when, station_call=fields.get("STATION_CALLSIGN", ""),
             operator=fields.get("OPERATOR", ""), contest_id=fields.get("CONTEST_ID", "")))
     return out

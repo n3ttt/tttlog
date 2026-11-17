@@ -8,11 +8,50 @@ import yaml
 
 from .contests.engine import Station
 
-from .paths import USER_DIR as CONFIG_DIR
+CONFIG_DIR = Path.home() / ".tttlog"
 STATION_FILE = CONFIG_DIR / "station.yaml"
 MACROS_FILE = CONFIG_DIR / "macros.yaml"
+CLUSTER_FILE = CONFIG_DIR / "cluster.yaml"
+COLORS_FILE = CONFIG_DIR / "colors.yaml"
+NETWORK_FILE = CONFIG_DIR / "network.yaml"
+NODE_ID_FILE = CONFIG_DIR / "node_id"
+
+# Local network (several tttlog computers sharing one log). Stations find each
+# other with a UDP broadcast on udp_port and link over TCP on tcp_port.
+DEFAULT_NETWORK = {
+    "enabled": False,
+    "station_name": "",       # "" = this computer's name, e.g. RUN1 / MULT / SHACK-PC
+    "net_name": "TTTLOG",     # only stations with the same network name link up
+    "tcp_port": 12071,
+    "udp_port": 12070,
+    "peers": [],              # extra stations to dial, "host" or "host:port" (when broadcast can't reach)
+}
+
+# Colors for the Needed window and the Spots window. "show" = the checkbox state.
+DEFAULT_COLORS = {
+    "needed_spotted": {"color": "#57cc99", "show": True},    # need it AND it's spotted now
+    "needed":         {"color": "#ffb4a2", "show": True},    # need it, nobody spotting it
+    "worked_spotted": {"color": "#bde0fe", "show": False},   # have it, but spotted again
+    "worked":         {"color": "#e9ecef", "show": False},   # have it
+    "spot_mult":      {"color": "#57cc99", "show": True},    # Spots window: new mult
+    "spot_q":         {"color": "#fff3b0", "show": True},    # Spots window: new Q, no mult
+    "spot_dupe":      {"color": "#9a9a9a", "show": False},   # Spots window: dupe / can't work
+}
+
+# DX cluster (telnet). login "" means "use the station call".
+DEFAULT_CLUSTER = {
+    "host": "w3lpl.net",
+    "port": 7373,
+    "login": "",
+    "max_age_min": 30,        # drop spots older than this
+    "auto_connect": False,    # connect when tttlog starts
+    "auto_spot_sp": False,    # spot each new S&P QSO (call + frequency) to the cluster
+    "init_commands": [],      # sent once after login, e.g. ["set/skimmer", "sh/dx 30"]
+}
 
 # Macro text: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are substituted.
+# Action tokens: {CLEAR} wipes the entry line; {SPOT} spots the last QSO
+# (call + frequency) to the DX cluster.
 # SSB: text is shown + the WAV file (in ~/.tttlog/wav/<MYCALL>/) is played by
 # the voice keyer (milestone M1). CW: text is sent by the keyer.
 DEFAULT_MACROS = {
@@ -28,7 +67,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "Please repeat", "wav": "agn.wav"},
             {"key": "F9", "label": "Nr?", "text": "Your power?", "wav": "pwr.wav"},
             {"key": "F10", "label": "Spare", "text": "", "wav": ""},
-            {"key": "F11", "label": "Spare", "text": "", "wav": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}", "wav": ""},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}", "wav": ""},
         ],
         "SP": [
@@ -42,7 +81,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "Please repeat", "wav": "agn.wav"},
             {"key": "F9", "label": "Spare", "text": "", "wav": ""},
             {"key": "F10", "label": "Spare", "text": "", "wav": ""},
-            {"key": "F11", "label": "Spare", "text": "", "wav": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}", "wav": ""},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}", "wav": ""},
         ],
     },
@@ -58,7 +97,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "AGN"},
             {"key": "F9", "label": "Nr?", "text": "NR?"},
             {"key": "F10", "label": "Spare", "text": ""},
-            {"key": "F11", "label": "Spare", "text": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}"},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}"},
         ],
         "SP": [
@@ -72,7 +111,7 @@ DEFAULT_MACROS = {
             {"key": "F8", "label": "AGN", "text": "AGN"},
             {"key": "F9", "label": "Spare", "text": ""},
             {"key": "F10", "label": "Spare", "text": ""},
-            {"key": "F11", "label": "Spare", "text": ""},
+            {"key": "F11", "label": "Spot", "text": "{SPOT}"},
             {"key": "F12", "label": "Wipe", "text": "{CLEAR}"},
         ],
     },
@@ -99,6 +138,62 @@ def load_macros() -> dict:
 def save_macros(m: dict) -> None:
     CONFIG_DIR.mkdir(exist_ok=True)
     MACROS_FILE.write_text(yaml.safe_dump(m, sort_keys=False))
+
+
+def load_cluster() -> dict:
+    cfg = dict(DEFAULT_CLUSTER)
+    if CLUSTER_FILE.exists():
+        cfg.update(yaml.safe_load(CLUSTER_FILE.read_text()) or {})
+    return cfg
+
+
+def save_cluster(cfg: dict) -> None:
+    CONFIG_DIR.mkdir(exist_ok=True)
+    CLUSTER_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def load_network() -> dict:
+    cfg = dict(DEFAULT_NETWORK)
+    if NETWORK_FILE.exists():
+        cfg.update(yaml.safe_load(NETWORK_FILE.read_text()) or {})
+    if not cfg.get("station_name"):
+        import socket
+        cfg["station_name"] = (socket.gethostname().split(".")[0] or "STATION").upper()[:16]
+    return cfg
+
+
+def save_network(cfg: dict) -> None:
+    NETWORK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NETWORK_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def node_id() -> str:
+    """A permanent id for this tttlog install (tells networked stations apart)."""
+    try:
+        v = NODE_ID_FILE.read_text().strip()
+        if len(v) >= 8:
+            return v
+    except OSError:
+        pass
+    import uuid
+    v = uuid.uuid4().hex
+    NODE_ID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    NODE_ID_FILE.write_text(v)
+    return v
+
+
+def load_colors() -> dict:
+    out = {k: dict(v) for k, v in DEFAULT_COLORS.items()}
+    if COLORS_FILE.exists():
+        for k, v in (yaml.safe_load(COLORS_FILE.read_text()) or {}).items():
+            if k in out and isinstance(v, dict):
+                out[k].update(v)
+    return out
+
+
+def save_colors(c: dict) -> None:
+    CONFIG_DIR.mkdir(exist_ok=True)
+    COLORS_FILE.write_text(yaml.safe_dump(c, sort_keys=False))
 
 
 def expand(text: str, station: Station, call: str, exch: str, rst: str = "59") -> str:
