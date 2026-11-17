@@ -1,0 +1,34 @@
+# Push a tag like v0.1.0a3 -> builds Mac (Apple Silicon + Intel), Windows and Linux,
+# then publishes them on the GitHub Releases page. The in-app updater
+# (Help > Check for updates) reads these releases.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    uses: ./.github/workflows/mac-build.yml
+  windows:
+    uses: ./.github/workflows/windows-build.yml
+  linux:
+    uses: ./.github/workflows/linux-build.yml
+
+  publish:
+    needs: [mac, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: out
+          merge-multiple: true
+      - run: ls -la out
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}

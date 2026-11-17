@@ -1,21 +1,24 @@
 """The one window."""
 from __future__ import annotations
 
+import os
 import re
+import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QMainWindow, QMessageBox, QPushButton,
+                               QListWidget, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
                                QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import config
 from ..contests.engine import ContestEngine, load_rules
 from ..core.cluster import parse_spot, spot_command
-from .. import __version__
+from .. import __version__, updater
 from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
@@ -45,9 +48,16 @@ QPushButton { min-width: 78px; }
 """
 
 
+class _Bridge(QObject):
+    """Brings results from worker threads back to the GUI thread."""
+    done = Signal(object, object)          # (callback, result)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._bridge = _Bridge()
+        self._bridge.done.connect(lambda cb, res: cb(res))
         self.setWindowTitle(f"tttlog {__version__}")
         self.resize(1100, 720)
         self.setStyleSheet(STYLE)
@@ -107,6 +117,8 @@ class MainWindow(QMainWindow):
         if self.cty_missing:
             self.banner("Country file missing or damaged: File ▸ Update country file  (using a small test file)", "orange")
         self._refresh_rates()
+        if not (os.environ.get("TTTLOG_OFFLINE") or os.environ.get("QT_QPA_PLATFORM") == "offscreen"):
+            QTimer.singleShot(5000, self.auto_update_check)
         if self.cluster_cfg.get("auto_connect"):
             self.cluster_connect(True)
         if self.net_cfg.get("enabled"):
@@ -315,6 +327,9 @@ class MainWindow(QMainWindow):
             a.setData(pct)
             self.scale_menu.addAction(a)
         hlp = mb.addMenu("&Help")
+        hlp.addAction(QAction("Check for updates…", self, triggered=lambda: self.check_updates(quiet=False)))
+        hlp.addAction(QAction("tttlog on GitHub", self, triggered=lambda: QDesktopServices.openUrl(
+            QUrl(f"https://github.com/{updater.REPO}"))))
         hlp.addAction(QAction("About tttlog…", self, triggered=self.show_about))
 
     def _build_mode_menu(self, modes):
@@ -931,13 +946,103 @@ class MainWindow(QMainWindow):
         import platform
         logs = self.log.path.parent if self.log else Path.home() / "Documents" / "tttlog"
         QMessageBox.about(self, "About tttlog", (
-            f"<b>tttlog {__version__}</b> (alpha)<br>"
+            f"<b>tttlog {updater.version_string()}</b> (alpha)<br>"
             f"Amateur radio contest logger<br><br>"
             f"Logs: {logs}<br>"
             f"Settings: {config.CONFIG_DIR}<br>"
             f"Country file: {data_file('cty.dat')}<br><br>"
             f"{platform.system()} {platform.release()} · Python {platform.python_version()}<br>"
             f"Please include this information in bug reports."))
+
+    # ---------------------------------------------------------- updates
+    def _bg(self, fn, callback):
+        """Run fn() off the GUI thread; callback(result or exception) runs on the GUI thread."""
+        def work():
+            try:
+                res = fn()
+            except Exception as e:                   # noqa: BLE001
+                res = e
+            self._bridge.done.emit(callback, res)
+        threading.Thread(target=work, daemon=True).start()
+
+    def auto_update_check(self):
+        """Quiet check at most once a day; only speaks up if there's something new."""
+        if time.time() - float(self.settings.value("last_update_check", 0) or 0) < 86400:
+            return
+        self.settings.setValue("last_update_check", time.time())
+        self.check_updates(quiet=True)
+
+    def check_updates(self, quiet: bool):
+        def done(rel):
+            if isinstance(rel, Exception) or rel is None:
+                if not quiet:
+                    QMessageBox.warning(self, "Check for updates",
+                                        f"Couldn't reach GitHub: {rel or 'no releases yet'}")
+                return
+            if not updater.is_newer(rel.version):
+                if not quiet:
+                    QMessageBox.information(self, "Check for updates",
+                                            f"You're up to date: tttlog {__version__}.")
+                return
+            box = QMessageBox(self)
+            box.setWindowTitle("Update available")
+            box.setText(f"<b>tttlog {rel.version}</b> is available. You have {__version__}.")
+            notes = rel.notes.strip()
+            box.setInformativeText(notes[:900] + ("…" if len(notes) > 900 else ""))
+            go = box.addButton("Update now", QMessageBox.AcceptRole)
+            box.addButton("Later", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is go:
+                self.install_update(rel)
+        self._bg(updater.fetch_latest, done)
+
+    def install_update(self, rel):
+        kind = updater.install_kind()
+        if kind == "git":
+            self.banner("Updating from GitHub (git pull)…", "orange")
+
+            def pulled(res):
+                if isinstance(res, Exception):
+                    out = getattr(res, "output", "") or str(res)
+                    self.banner("")
+                    QMessageBox.warning(self, "Update failed", out[-1500:])
+                    return
+                self.banner("Update installed")
+                if QMessageBox.question(self, "Updated", "Update installed. Restart tttlog now?") \
+                        == QMessageBox.Yes:
+                    updater.restart_from_source()
+                    self.close()
+            self._bg(updater.update_git_checkout, pulled)
+            return
+        if not rel.asset_url:                    # no build for this computer: open the page
+            QDesktopServices.openUrl(QUrl(rel.url))
+            return
+        dest = Path.home() / "Downloads"
+        dest.mkdir(exist_ok=True)
+        dest = dest / rel.asset_name
+        prog = QProgressDialog(f"Downloading tttlog {rel.version}…", None, 0, 100, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.show()
+
+        def progress(n, total):
+            self._bridge.done.emit(lambda _: prog.setValue(int(n * 100 / total)), None)
+
+        def downloaded(res):
+            prog.close()
+            if isinstance(res, Exception):
+                QMessageBox.warning(self, "Update failed", str(res))
+                return
+            if kind == "mac-app":
+                updater.stage_mac_update(res)
+                QMessageBox.information(self, "Update", "tttlog will close, update itself, and reopen.")
+                self.close()
+                QApplication.quit()
+            else:
+                updater.reveal(res)
+                QMessageBox.information(self, "Update downloaded",
+                                        f"Saved {res.name} to Downloads. Replace your current copy with it.")
+        self._bg(lambda: updater.download(rel.asset_url, dest, progress), downloaded)
 
     # ---------------------------------------------------------- panes
     @property

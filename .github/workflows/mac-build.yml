@@ -1,0 +1,70 @@
+# Builds the Mac app: tests on macOS, packages tttlog.app with PyInstaller,
+# checks it starts, and uploads tttlog-<version>-macos-<arch>.dmg.
+# Apple Silicon (macos-14) and Intel (macos-15-intel) builds.
+name: Mac build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pyinstaller
+
+      - name: Last good country file (used if the download is blocked)
+        uses: actions/cache@v6
+        with:
+          path: data/cty.dat
+          key: cty-${{ github.run_id }}
+          restore-keys: cty-
+
+      - name: Latest country file
+        run: python scripts/update_cty.py
+
+      - name: Super Check Partial file (optional)
+        continue-on-error: true
+        run: |
+          curl -fsSL --max-time 60 -o data/MASTER.SCP https://www.supercheckpartial.com/MASTER.SCP
+          if grep -qi '<html' data/MASTER.SCP; then echo "::warning::Got a web page, not MASTER.SCP"; rm data/MASTER.SCP; fi
+
+      - name: Tests (on macOS)
+        run: python -m pytest -q
+
+      - name: Build tttlog.app + DMG
+        run: python scripts/build_app.py
+
+      - name: Check the app starts
+        run: ./dist/tttlog.app/Contents/MacOS/tttlog --smoke-test
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v7
+        with:
+          name: tttlog-macos-${{ matrix.arch }}
+          path: dist/tttlog-*-macos-*.dmg
+          retention-days: 30
