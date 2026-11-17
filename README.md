@@ -6,7 +6,25 @@ Keyboard-first, with contest rules kept in files, and built so you never lose a 
 > Status: **v0.1, milestone M0.** Logging, dupe and multiplier checks, scoring, editable F-keys, and ADIF/Cabrillo export all work.
 > Rig control and the voice keyer come in M1. First live target: **ARRL DX SSB, March 6–7, 2027**.
 
-## Quick start (macOS)
+## Install on a Mac (no Python needed)
+
+1. Download the `.dmg` from **[Releases](https://github.com/n3ttt/tttlog/releases)**: `macos-arm64` for Apple Silicon (M1–M4), `macos-x86_64` for Intel.
+2. Open it and drag **tttlog** into **Applications**.
+3. **First launch only:** macOS blocks apps without an Apple Developer ID. Open tttlog once, then go to **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway**.
+
+## Version & updates
+
+- **Help ▸ About tttlog** shows the version (and the git commit when running from source). `tttlog --version` prints it too.
+- tttlog checks GitHub once a day. **Help ▸ Check for updates…** checks right away.
+  - **Mac app:** **Update now** downloads the new DMG, replaces the app, and reopens it.
+  - **From source (git clone):** does `git pull` + reinstall, then offers to restart.
+  - **Windows / Linux:** downloads the new build to Downloads.
+
+### Making a release
+Bump `__version__` in `tttlog/__init__.py`, commit to `main`, then `git tag v0.1.0a3 && git push origin v0.1.0a3`.
+The **Release** workflow tests and builds Mac (both chips), Windows, and Linux, and publishes them on the Releases page.
+
+## Run from source (macOS)
 
 ```bash
 brew install python@3.12 git            # skip if already installed
