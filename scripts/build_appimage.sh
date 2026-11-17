@@ -13,14 +13,17 @@ APPDIR="$ROOT/build/AppDir"
 [ -x "$ROOT/dist/tttlog/tttlog" ] || { echo "dist/tttlog missing: run scripts/build_app.py first" >&2; exit 1; }
 
 rm -rf "$APPDIR"
-mkdir -p "$APPDIR/usr/lib" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps"
+mkdir -p "$APPDIR/usr/lib" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
+         "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 cp -a "$ROOT/dist/tttlog" "$APPDIR/usr/lib/tttlog"
 cp "$ROOT/packaging/linux/AppRun" "$APPDIR/AppRun"; chmod +x "$APPDIR/AppRun"
 cp "$ROOT/packaging/linux/tttlog.desktop" "$APPDIR/tttlog.desktop"
 cp "$ROOT/packaging/linux/tttlog.desktop" "$APPDIR/usr/share/applications/"
 cp "$ROOT/tttlog/resources/tttlog.svg" "$APPDIR/tttlog.svg"
 cp "$ROOT/tttlog/resources/tttlog.svg" "$APPDIR/usr/share/icons/hicolor/scalable/apps/"
-ln -sf tttlog.svg "$APPDIR/.DirIcon"
+# .DirIcon has to be a PNG (appimagetool rejects an SVG there)
+"${PYTHON:-python3}" "$ROOT/scripts/svg_to_png.py" "$ROOT/tttlog/resources/tttlog.svg" "$APPDIR/.DirIcon" 256
+cp "$APPDIR/.DirIcon" "$APPDIR/usr/share/icons/hicolor/256x256/apps/tttlog.png"
 
 IMG="$ROOT/dist/tttlog-$VER-$ARCH.AppImage"
 ARCH="$ARCH" "$TOOL" --no-appstream "$APPDIR" "$IMG"
