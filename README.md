@@ -21,8 +21,8 @@ Keyboard-first, with contest rules kept in files, and built so you never lose a 
   - **Windows / Linux:** downloads the new build to Downloads.
 
 ### Making a release
-Bump `__version__` in `tttlog/__init__.py`, commit to `main`, then `git tag v0.1.0a3 && git push origin v0.1.0a3`.
-The **Release** workflow tests and builds Mac (both chips), Windows, and Linux, and publishes them on the Releases page.
+Bump `__version__` in `tttlog/__init__.py` and commit to `main`. Then on GitHub: **Releases ▸ Draft a new release**, tag `v<version>` (e.g. `v0.1.0a3`), tick **Set as a pre-release** for alphas, and **Publish**.
+The **Release** workflow tests and builds Mac (both chips), Windows, and Linux, and attaches them to the release (about 15 minutes).
 
 ## Run from source (macOS)
 
