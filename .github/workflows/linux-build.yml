@@ -39,12 +39,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" pyinstaller
 
+      - name: Last good country file (used if the download is blocked)
+        uses: actions/cache@v6
+        with:
+          path: data/cty.dat
+          key: cty-${{ github.run_id }}
+          restore-keys: cty-
+
       - name: Latest country file
         run: python scripts/update_cty.py
 
       - name: Super Check Partial file (optional)
         continue-on-error: true
-        run: curl -fsSL --max-time 60 -o data/MASTER.SCP https://www.supercheckpartial.com/MASTER.SCP
+        run: |
+          curl -fsSL --max-time 60 -o data/MASTER.SCP https://www.supercheckpartial.com/MASTER.SCP
+          if grep -qi '<html' data/MASTER.SCP; then echo "::warning::Got a web page, not MASTER.SCP"; rm data/MASTER.SCP; fi
 
       - name: Tests (on Linux)
         run: python -m pytest -q

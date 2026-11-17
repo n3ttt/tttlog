@@ -30,13 +30,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]" pyinstaller
 
+      - name: Last good country file (used if the download is blocked)
+        uses: actions/cache@v6
+        with:
+          path: data/cty.dat
+          key: cty-${{ github.run_id }}
+          restore-keys: cty-
+
       - name: Latest country file
         run: python scripts/update_cty.py
 
       - name: Super Check Partial file (optional)
         continue-on-error: true
         shell: pwsh
-        run: Invoke-WebRequest https://www.supercheckpartial.com/MASTER.SCP -OutFile data/MASTER.SCP -TimeoutSec 60
+        run: |
+          Invoke-WebRequest https://www.supercheckpartial.com/MASTER.SCP -OutFile data/MASTER.SCP -TimeoutSec 60
+          if (Select-String -Path data/MASTER.SCP -Pattern '<html' -Quiet) { Write-Output "::warning::Got a web page, not MASTER.SCP"; Remove-Item data/MASTER.SCP }
 
       - name: Tests (on Windows)
         run: python -m pytest -q

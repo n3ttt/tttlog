@@ -117,3 +117,15 @@ def test_exports(tmp_path, cty, station):
     assert "CLAIMED-SCORE: 12" in text
     assert "QSO: 14200 PH 2027-03-06 0001 N3TTT" in text
     assert text.strip().endswith("END-OF-LOG:")
+
+
+def test_cty_survives_an_error_page(tmp_path):
+    """A blocked download once saved a web page as cty.dat; that mustn't crash."""
+    from tttlog.core.cty import CtyDat
+    p = tmp_path / "cty.dat"
+    p.write_text('<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf8">\n'
+                 '  <script>x("a:b");</script>\n</head>\n</html>\n')
+    assert CtyDat(p).entities() == []
+    import pytest
+    with pytest.raises(ValueError):
+        CtyDat.check(p.read_bytes())

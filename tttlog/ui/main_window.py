@@ -61,6 +61,9 @@ class MainWindow(QMainWindow):
         self.sync: LogSync | None = None
         self.cty_missing = not data_file("cty.dat").exists()
         self.cty = CtyDat(FIXTURE_CTY if self.cty_missing else None)
+        if not self.cty_missing and len(self.cty.entities()) < 100:   # damaged / not a cty.dat
+            self.cty_missing = True
+            self.cty = CtyDat(FIXTURE_CTY)
         self.log: Log | None = None
         self.engine: ContestEngine | None = None
         self.qsos: list[QSO] = []
@@ -102,7 +105,7 @@ class MainWindow(QMainWindow):
         if last and Path(last).exists():
             self.open_log(Path(last))
         if self.cty_missing:
-            self.banner("Country file missing: File ▸ Update country file  (using a small test file)", "orange")
+            self.banner("Country file missing or damaged: File ▸ Update country file  (using a small test file)", "orange")
         self._refresh_rates()
         if self.cluster_cfg.get("auto_connect"):
             self.cluster_connect(True)

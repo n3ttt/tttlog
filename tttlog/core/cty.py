@@ -66,10 +66,15 @@ class CtyDat:
                 continue
             if not line[0].isspace():                      # header line
                 f = [x.strip() for x in line.split(":")]
-                entity = Entity(name=f[0], cq_zone=int(f[1]), itu_zone=int(f[2]),
-                                continent=f[3], lat=float(f[4]), lon=-float(f[5]),
-                                prefix=f[7].lstrip("*"))
+                try:
+                    entity = Entity(name=f[0], cq_zone=int(f[1]), itu_zone=int(f[2]),
+                                    continent=f[3], lat=float(f[4]), lon=-float(f[5]),
+                                    prefix=f[7].lstrip("*"))
+                except (IndexError, ValueError):             # not a cty.dat line: skip it
+                    entity = None
                 buf = ""
+                continue
+            if entity is None:
                 continue
             buf += line.strip()
             if buf.endswith(";"):
