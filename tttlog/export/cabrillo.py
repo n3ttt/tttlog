@@ -17,6 +17,15 @@ def qso_line(q: QSO, station_call: str) -> str:
             f"{station_call:<13} {sent} {q.call.upper():<13} {rcvd}").rstrip()
 
 
+def operators(qsos: list[QSO], st) -> str:
+    """Everyone who logged a QSO (multi-op), else the station's operator."""
+    ops: list[str] = []
+    for q in qsos:
+        if q.operator and q.operator not in ops:
+            ops.append(q.operator)
+    return " ".join(ops) or st.operator or st.call
+
+
 def export_cabrillo(qsos: list[QSO], engine: ContestEngine, path: str | Path,
                     category: dict | None = None, soapbox: str = "") -> int:
     st = engine.station
@@ -32,7 +41,7 @@ def export_cabrillo(qsos: list[QSO], engine: ContestEngine, path: str | Path,
         *(f"CATEGORY-{k}: {v}" for k, v in cat.items()),
         f"CLAIMED-SCORE: {score.total}",
         f"CLUB: {st.club}" if st.club else None,
-        f"OPERATORS: {st.operator or st.call}",
+        f"OPERATORS: {operators(qsos, st)}",
         f"NAME: {st.name}" if st.name else None,
         *(f"ADDRESS: {a}" for a in st.address),
         f"EMAIL: {st.email}" if st.email else None,

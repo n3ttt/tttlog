@@ -47,28 +47,34 @@ class HourRow:
 
 def hourly(qsos: Iterable[QSO],
            mult_keys: Callable[[QSO], list] | None = None,
-           is_valid: Callable[[QSO], bool] | None = None) -> list[HourRow]:
+           is_valid: Callable[[QSO], bool] | None = None,
+           only: Callable[[QSO], bool] | None = None) -> list[HourRow]:
     """One row per clock hour that has QSOs, oldest first.
 
     `mult_keys(q)` returns the mult keys a QSO counts toward; the first time a
     key appears it is counted as a new mult in that hour. `is_valid(q)` lets
-    the caller drop QSOs that don't count in the contest.
+    the caller drop QSOs that don't count in the contest. `only(q)` limits the
+    rows to some QSOs (one operator) while mults stay new-to-the-whole-log.
     """
     rows: dict[datetime, HourRow] = {}
     seen: set = set()
     for q in _good(qsos):
         if is_valid and not is_valid(q):
             continue
+        new = 0
+        if mult_keys:
+            for k in mult_keys(q):
+                if k not in seen:
+                    seen.add(k)
+                    new += 1
+        if only and not only(q):
+            continue
         h = q.time_utc.replace(minute=0, second=0, microsecond=0)
         row = rows.setdefault(h, HourRow(hour=h))
         row.qsos += 1
         band = q.band or "?"
         row.by_band[band] = row.by_band.get(band, 0) + 1
-        if mult_keys:
-            for k in mult_keys(q):
-                if k not in seen:
-                    seen.add(k)
-                    row.mults += 1
+        row.mults += new
     return [rows[h] for h in sorted(rows)]
 
 
@@ -103,3 +109,33 @@ def summary(qsos: Iterable[QSO], now: datetime) -> RateSummary:
                        last60_count=count_since(qsos, 60, now),
                        last15_count=count_since(qsos, 15, now),
                        best60=best_60(qsos))
+
+
+def op_of(q: QSO) -> str:
+    return (q.operator or q.station_call or "?").upper()
+
+
+def operators(qsos: Iterable[QSO]) -> list[str]:
+    """Operators in the log, in the order they first logged."""
+    seen: dict[str, None] = {}
+    for q in _good(qsos):
+        seen.setdefault(op_of(q), None)
+    return list(seen)
+
+
+@dataclass
+class OpRow:
+    op: str
+    qsos: int
+    summary: RateSummary
+    share: float                                     # fraction of the log's QSOs
+
+
+def by_operator(qsos: Iterable[QSO], now: datetime) -> list[OpRow]:
+    """Rates for each operator, most QSOs first."""
+    good = _good(qsos)
+    groups: dict[str, list[QSO]] = {}
+    for q in good:
+        groups.setdefault(op_of(q), []).append(q)
+    rows = [OpRow(op, len(g), summary(g, now), len(g) / len(good)) for op, g in groups.items()]
+    return sorted(rows, key=lambda r: (-r.qsos, r.op))

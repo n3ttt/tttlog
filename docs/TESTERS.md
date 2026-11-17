@@ -30,6 +30,8 @@ To uninstall, delete the tttlog folder. Your logs and settings are kept
    Documents\tttlog unless you choose another folder.
 3. Type a call, press Space to jump to the exchange, press Enter to log.
    Typing a frequency in kHz (for example 14250) + Enter changes frequency.
+   Typing OPON + Enter (or OPON K3ABC) changes who is operating; each
+   QSO records its operator and the Rate pane shows rates per operator.
 4. Optional DX cluster: Config > DX cluster (default w3lpl.net, port 7373,
    logs in with your call), then Cluster > Connect (Ctrl+K).
    Spotting (F11 or Ctrl+Shift+S) sends a real spot that everyone on the
