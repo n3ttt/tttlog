@@ -8,7 +8,7 @@ import yaml
 
 from .contests.engine import Station
 
-CONFIG_DIR = Path.home() / ".tttlog"
+from .paths import USER_DIR as CONFIG_DIR
 STATION_FILE = CONFIG_DIR / "station.yaml"
 MACROS_FILE = CONFIG_DIR / "macros.yaml"
 
