@@ -33,6 +33,7 @@ from .rate_pane import RatePane
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 LAYOUT_VERSION = "6"     # bump when panes are added/renamed so old saved layouts are dropped
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
+OP_RE = re.compile(r"^[A-Z0-9]{3,}(/[A-Z0-9]+)*$")
 
 STYLE = """
 QLabel#radio { font: bold 15pt; }
@@ -257,6 +258,8 @@ class MainWindow(QMainWindow):
         op = mb.addMenu("&Operating")
         op.addAction(QAction("Toggle Run / S&&P", self, shortcut="Ctrl+R", triggered=self.toggle_run))
         op.addAction(QAction("Set frequency…", self, shortcut="Ctrl+F", triggered=self.ask_freq))
+        op.addAction(QAction("Operator on (OPON)…", self, shortcut="Ctrl+Shift+O",
+                             triggered=lambda: self.opon()))
         self.mode_menu = op.addMenu("Mode")
         self._build_mode_menu(["SSB", "CW"])
         op.addAction(QAction("Delete selected QSO", self, shortcut="Ctrl+D", triggered=self.delete_selected))
@@ -338,12 +341,12 @@ class MainWindow(QMainWindow):
                 self._refresh_needed()
 
     def _refresh_rates(self, now=None):
-        self.rate_pane.update_rates(self.qsos, self.engine, now or utc_now())
+        self.rate_pane.update_rates(self.qsos, self.engine, now or utc_now(), me=self.current_op)
 
     def _refresh_radio(self):
         band = band_from_khz(self.freq_khz) or "?"
         self.radio_lbl.setText(f"{self.freq_khz:,.1f} kHz  {band}  {self.mode}  "
-                               f"[{'RUN' if self.run_mode else 'S&P'}]")
+                               f"[{'RUN' if self.run_mode else 'S&P'}]  OP {self.current_op}")
         page = self.macros.get(self.mode, self.macros.get("SSB"))["RUN" if self.run_mode else "SP"]
         for i, b in enumerate(self.fbuttons):
             m = page[i] if i < len(page) else {"label": ""}
@@ -477,6 +480,10 @@ class MainWindow(QMainWindow):
             self.set_freq(float(call))
             self.call.clear()
             return
+        if call == "OPON" or call.startswith("OPON "):     # OPON [call] + Enter: change operator
+            self.call.clear()
+            self.opon(call[5:].strip())
+            return
         modes = self.engine.rules["modes"] if self.engine else ["SSB", "CW"]
         if call in modes:                                 # type CW / SSB / FT8 + Enter to change mode
             self.set_mode(call)
@@ -506,7 +513,7 @@ class MainWindow(QMainWindow):
                 rst_sent=self.engine.default_rst(self.mode),
                 rst_rcvd=self.rst.text().strip() or self.engine.default_rst(self.mode),
                 exch_sent=self.engine.sent_exchange(), exch_rcvd=self.exch.text().strip().upper(),
-                station_call=self.station.call, operator=self.station.operator or self.station.call,
+                station_call=self.station.call, operator=self.current_op,
                 contest_id=self.engine.rules["id"])
         self.engine.annotate(q, self.qsos)
         if self.run_mode:
@@ -643,6 +650,30 @@ class MainWindow(QMainWindow):
             self._rescore_and_persist([x for x in self.qsos if x.id != q.id])
 
     # ---------------------------------------------------------- config
+    @property
+    def current_op(self) -> str:
+        """Who is operating this computer right now (OPON), else the station's operator."""
+        return (str(self.settings.value("current_op", "") or "")
+                or self.station.operator or self.station.call)
+
+    def opon(self, op: str = "") -> bool:
+        """Set the operator logged on new QSOs from this computer (type OPON in the call field)."""
+        if not op:
+            op, ok = QInputDialog.getText(self, "Operator on", "Operator callsign:", text=self.current_op)
+            if not ok:
+                return False
+        op = op.strip().upper()
+        if not OP_RE.match(op):
+            self.banner(f"OPON: '{op}' doesn't look like a callsign", "#ffd166")
+            return False
+        self.settings.setValue("current_op", op)
+        self._refresh_radio()
+        self._push_net_status()
+        self._refresh_rates()
+        self.banner(f"Operator is now {op}")
+        self.call.setFocus()
+        return True
+
     def edit_station(self):
         dlg = StationDialog(self.station, self)
         if dlg.exec():
@@ -835,7 +866,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "net"):
             return
         me = self.net_cfg.get("station_name", "")
-        self.net.set_status({"op": self.station.operator or self.station.call,
+        self.net.set_status({"op": self.current_op,
                              "band": band_from_khz(self.freq_khz), "freq": self.freq_khz,
                              "mode": self.mode, "run": self.run_mode,
                              "qsos": sum(1 for q in self.qsos if q.station_name == me)})

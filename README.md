@@ -137,6 +137,8 @@ What's shared:
 - Each station keeps a full copy. A station that drops out (or a PC that reboots) catches up when it's back, and QSOs logged while it was cut off go to the others too. If two stations edit the same QSO while cut off, the newer edit wins on every station.
 - The **Network** pane lists each station's operator, band, frequency, mode, Run/S&P, and QSO count. A station on your band and mode is highlighted, and a clock more than a minute off is flagged. The box at the bottom sends talk messages to all stations.
 
+Operators: type **OPON** + Enter in the call field (or **OPON K3ABC**, or Operating ▸ Operator on…, Ctrl+Shift+O) when someone sits down. New QSOs from that computer are logged under that operator, the top bar shows **OP K3ABC**, and the Network pane shows it to the other stations. The OPON operator is kept per computer; without OPON the operator from the station profile is used. The **Rate** pane lists each operator's QSOs, share, last-10 rate, last-60 count and best 60. Pick an operator under **Rates for** (or double-click their row) to see just their rates and hours. The Cabrillo OPERATORS line lists everyone who logged a QSO.
+
 The network name keeps separate groups apart; it isn't a password. Use it only on a network you trust.
 
 ## Contests
