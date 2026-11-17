@@ -9,7 +9,7 @@ other window. The ⇲ button (or double-clicking the title bar) docks it again.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QDockWidget, QHBoxLayout, QLabel, QToolButton, QWidget
+from PySide6.QtWidgets import QDockWidget, QFrame, QHBoxLayout, QLabel, QScrollArea, QToolButton, QWidget
 
 FLOAT_FLAGS = (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint |
                Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
@@ -55,10 +55,27 @@ class PaneTitleBar(QWidget):
         self.dock.toggle_floating()
 
 
+# Smallest a pane may be squeezed to. Below what its contents need, it
+# scrolls instead of forcing the whole window to be bigger than a small screen.
+PANE_MIN = QSize(120, 48)
+
+
+def _shrinkable(widget: QWidget) -> QScrollArea:
+    sc = QScrollArea()
+    sc.setWidget(widget)
+    sc.setWidgetResizable(True)
+    sc.setFrameShape(QFrame.NoFrame)
+    sc.setMinimumSize(PANE_MIN)
+    sc.setSizePolicy(widget.sizePolicy())
+    return sc
+
+
 class Pane(QDockWidget):
-    def __init__(self, title: str, widget: QWidget, parent=None, closable: bool = True):
+    def __init__(self, title: str, widget: QWidget, parent=None, closable: bool = True,
+                 scroll: bool = True):
         super().__init__(title, parent, objectName=f"dock_{title}")
-        self.setWidget(widget)
+        self.content = widget
+        self.setWidget(_shrinkable(widget) if scroll else widget)
         self.closable = closable
         if not closable:
             self.setFeatures(self.features() & ~QDockWidget.DockWidgetClosable)

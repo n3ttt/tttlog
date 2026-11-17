@@ -1,3 +1,4 @@
+import os
 import sys
 
 from pathlib import Path
@@ -10,10 +11,25 @@ from . import __version__
 from .ui.main_window import MainWindow
 
 
+def _apply_display_size() -> None:
+    """View ▸ Display size: scale the whole window (for small or very large screens).
+    Qt reads this before the app starts, so changes take effect on restart."""
+    if os.environ.get("QT_SCALE_FACTOR"):
+        return                                   # the user set it themselves
+    from PySide6.QtCore import QSettings
+    try:
+        pct = int(QSettings("N3TTT", "tttlog").value("ui_scale", 100) or 100)
+    except (TypeError, ValueError):
+        return
+    if pct != 100 and 50 <= pct <= 200:
+        os.environ["QT_SCALE_FACTOR"] = f"{pct / 100:g}"
+
+
 def main() -> int:
     if "--version" in sys.argv:
         print(f"tttlog {__version__}")
         return 0
+    _apply_display_size()
     app = QApplication(sys.argv)
     app.setApplicationName("tttlog")
     app.setApplicationVersion(__version__)
