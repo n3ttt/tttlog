@@ -1,6 +1,6 @@
 __pycache__/
 *.pyc
-.venv/
+.venv
 venv/
 build/
 dist/
@@ -11,5 +11,3 @@ dist/
 data/cty.dat
 data/MASTER.SCP
 .DS_Store
-*.spec
-dist/

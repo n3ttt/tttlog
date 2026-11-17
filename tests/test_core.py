@@ -10,7 +10,7 @@ from tttlog.contests.engine import ContestEngine, Station, load_rules, list_cont
 from tttlog.export.adif import export_adif, import_adif
 from tttlog.export.cabrillo import export_cabrillo
 
-FIX = Path(__file__).parents[1] / "tttlog" / "resources" / "cty_sample.dat"
+FIX = Path(__file__).parent / "fixtures" / "cty_sample.dat"
 T0 = datetime(2027, 3, 6, 0, 1, tzinfo=timezone.utc)
 
 
@@ -117,3 +117,15 @@ def test_exports(tmp_path, cty, station):
     assert "CLAIMED-SCORE: 12" in text
     assert "QSO: 14200 PH 2027-03-06 0001 N3TTT" in text
     assert text.strip().endswith("END-OF-LOG:")
+
+
+def test_cty_survives_an_error_page(tmp_path):
+    """A blocked download once saved a web page as cty.dat; that mustn't crash."""
+    from tttlog.core.cty import CtyDat
+    p = tmp_path / "cty.dat"
+    p.write_text('<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf8">\n'
+                 '  <script>x("a:b");</script>\n</head>\n</html>\n')
+    assert CtyDat(p).entities() == []
+    import pytest
+    with pytest.raises(ValueError):
+        CtyDat.check(p.read_bytes())

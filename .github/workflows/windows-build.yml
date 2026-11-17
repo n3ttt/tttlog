@@ -1,0 +1,69 @@
+# Builds the Windows alpha-test zip: tests on Windows, packages tttlog.exe with
+# PyInstaller, checks the .exe starts, and uploads tttlog-<version>-windows.zip.
+# Download it from the run's "Artifacts" section on GitHub.
+name: Windows build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:          # used by release.yml when a v* tag is pushed
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" pyinstaller
+
+      - name: Last good country file (used if the download is blocked)
+        uses: actions/cache@v6
+        with:
+          path: data/cty.dat
+          key: cty-${{ github.run_id }}
+          restore-keys: cty-
+
+      - name: Latest country file
+        run: python scripts/update_cty.py
+
+      - name: Super Check Partial file (optional)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.supercheckpartial.com/MASTER.SCP -OutFile data/MASTER.SCP -TimeoutSec 60
+          if (Select-String -Path data/MASTER.SCP -Pattern '<html' -Quiet) { Write-Output "::warning::Got a web page, not MASTER.SCP"; Remove-Item data/MASTER.SCP }
+
+      - name: Tests (on Windows)
+        run: python -m pytest -q
+
+      - name: Build tttlog.exe
+        run: python scripts/build_app.py
+
+      - name: Check the .exe starts
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\tttlog\tttlog.exe -ArgumentList "--smoke-test" -Wait -PassThru `
+               -RedirectStandardOutput smoke.txt -RedirectStandardError smoke-err.txt
+          Get-Content smoke.txt, smoke-err.txt
+          if ($p.ExitCode -ne 0) { throw "tttlog.exe smoke test failed (exit $($p.ExitCode))" }
+
+      - name: Upload zip
+        uses: actions/upload-artifact@v7
+        with:
+          name: tttlog-windows
+          path: dist/tttlog-*-windows.zip
+          retention-days: 30

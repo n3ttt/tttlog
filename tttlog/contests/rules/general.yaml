@@ -1,0 +1,22 @@
+# General log: everyday QSOs, no contest rules.
+# No dupes (work anyone again), no points. DXCC is tracked so the banner,
+# Spots and Needed windows can show "new one" countries.
+id: GENERAL
+name: General log (everyday QSOs, not a contest)
+general: true
+modes: [SSB, CW, FT8, FT4, RTTY, AM, FM]
+bands: [160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m, 12m, 10m, 6m, 2m, 70cm]
+
+dupe: none
+
+exchange:
+  sent:
+    - {name: rst, default: {CW: "599", RTTY: "599", FT8: "-10", FT4: "-10", default: "59"}}
+  rcvd:
+    - {name: rst, default: {CW: "599", RTTY: "599", FT8: "-10", FT4: "-10", default: "59"}}
+    - {name: notes, label: "NAME / QTH / NOTES", free: true, optional: true}
+
+points: {type: none}
+
+mults:
+  - {type: dxcc, scope: overall, label: "DXCC"}

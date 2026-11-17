@@ -14,7 +14,6 @@ dependencies = ["PySide6>=6.6", "PyYAML>=6.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-build = ["pyinstaller>=6.6"]
 
 [project.scripts]
 tttlog = "tttlog.__main__:main"
@@ -22,12 +21,12 @@ tttlog = "tttlog.__main__:main"
 [tool.setuptools.packages.find]
 include = ["tttlog*"]
 
-[tool.setuptools.dynamic]
-version = {attr = "tttlog.__version__"}
-
 [tool.setuptools.package-data]
 "tttlog.contests" = ["rules/*.yaml"]
-"tttlog" = ["resources/*"]
+"tttlog.resources" = ["*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.dynamic]
+version = {attr = "tttlog.__version__"}
