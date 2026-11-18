@@ -1783,15 +1783,20 @@ class MainWindow(QMainWindow):
             want = json.loads(sizes) if sizes else {}
         except ValueError:
             want = {}
-        docks = [d for d in _docked(self) if d.objectName() in want]
-        if docks:
-            self.resizeDocks(docks, [want[d.objectName()][0] for d in docks], Qt.Horizontal)
-            # A tabbed pane's height doesn't count its tab bar the same way both ways, so
-            # tabbed panes just take what's left in their column.
-            untabbed = [d for d in docks if not self.tabifiedDockWidgets(d)]
-            if untabbed:
-                self.resizeDocks(untabbed, [want[d.objectName()][1] for d in untabbed], Qt.Vertical)
-        QTimer.singleShot(0, lambda: self._apply_minimized(mins))
+        def apply():
+            docks = [d for d in _docked(self) if d.objectName() in want]
+            if docks:
+                self.resizeDocks(docks, [want[d.objectName()][0] for d in docks], Qt.Horizontal)
+                # A tabbed pane's height doesn't count its tab bar the same way both ways, so
+                # tabbed panes just take what's left in their column.
+                untabbed = [d for d in docks if not self.tabifiedDockWidgets(d)]
+                if untabbed:
+                    self.resizeDocks(untabbed, [want[d.objectName()][1] for d in untabbed], Qt.Vertical)
+
+        apply()
+        # Windows does another layout pass after restoreState that can undo the sizes:
+        # set them again once it has settled, then roll up the minimized panes.
+        QTimer.singleShot(60, lambda: (apply(), QTimer.singleShot(0, lambda: self._apply_minimized(mins))))
 
     def reset_layout(self):
         """Back to tttlog's default arrangement (the operator's saved layout is kept
