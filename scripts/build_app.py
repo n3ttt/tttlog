@@ -19,6 +19,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,8 +102,17 @@ def build_mac_dmg() -> int:
                                             encoding="utf-8")
     dmg = ROOT / "dist" / f"tttlog-{ver}-macos-{arch}.dmg"
     dmg.unlink(missing_ok=True)
-    subprocess.run(["hdiutil", "create", "-volname", f"tttlog {ver}", "-srcfolder", str(stage),
-                    "-ov", "-format", "UDZO", str(dmg)], check=True)
+    # hdiutil sometimes fails with "Resource busy" on CI runners while something else briefly
+    # holds the disk; it works on a retry.
+    cmd = ["hdiutil", "create", "-volname", f"tttlog {ver}", "-srcfolder", str(stage),
+           "-ov", "-format", "UDZO", str(dmg)]
+    for attempt in range(1, 6):
+        if subprocess.run(cmd).returncode == 0:
+            break
+        if attempt == 5:
+            raise subprocess.CalledProcessError(1, cmd)
+        print(f"hdiutil failed (attempt {attempt}); retrying in {attempt * 5}s")
+        time.sleep(attempt * 5)
     print(f"Built {app}\nDisk image {dmg}")
     return 0
 
