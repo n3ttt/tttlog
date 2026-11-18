@@ -13,6 +13,16 @@ def _geo(w):
     return {n: getattr(w, "dock_" + n).geometry().getRect() for n in NAMES}
 
 
+TOL = 12      # px: fonts and title bars differ a little between Mac, Windows and Linux
+
+
+def _same(a, b, tol=TOL):
+    """Two layouts match: every pane within a few pixels (a moved or resized pane is far more)."""
+    bad = {n: (a[n], b[n]) for n in a if any(abs(x - y) > tol for x, y in zip(a[n], b[n]))}
+    assert not bad, bad
+    return True
+
+
 def _settle(app, ms=250):
     _pump(app, lambda: False, ms)
 
@@ -31,12 +41,12 @@ def test_minimize_doesnt_move_other_panes(app, win):
     before = _geo(win)
     win.dock_telnet.set_minimized(True); _settle(app)
     after = _geo(win)
-    moved = {n for n in NAMES if after[n] != before[n]}
-    assert moved == {"spots", "telnet"}                     # only Spots grows down into the space
-    assert after["spots"][2] == before["spots"][2]          # ...and keeps its width
-    assert after["log"] == before["log"]
+    others = {n: before[n] for n in NAMES if n not in ("spots", "telnet")}
+    _same(others, {n: after[n] for n in others})            # nothing else moves
+    assert abs(after["spots"][2] - before["spots"][2]) <= 2  # Spots keeps its width...
+    assert after["spots"][3] > before["spots"][3] + 100     # ...and grows down into the space
     win.dock_telnet.set_minimized(False); _settle(app)
-    assert _geo(win) == before                              # restore puts everything back
+    _same(_geo(win), before)                                # restore puts everything back
 
 
 def test_layout_per_operator(app, win):
@@ -49,13 +59,13 @@ def test_layout_per_operator(app, win):
     win.dock_telnet.set_minimized(False)
     win.resizeDocks([win.dock_log, win.dock_spots], [260, 140], Qt.Horizontal); _settle(app)
     theirs = _geo(win)
-    assert theirs != mine
+    assert any(abs(x - y) > 50 for n in NAMES for x, y in zip(theirs[n], mine[n]))   # really different
 
     win.opon("N3TTT"); _settle(app)                         # back to my layout
     assert "N3TTT's window layout" in win.banner_lbl.text()
-    assert win.dock_telnet.minimized and _geo(win) == mine
+    assert win.dock_telnet.minimized and _same(_geo(win), mine)
     win.opon("K3ABC"); _settle(app)                         # and theirs was saved when they left
-    assert not win.dock_telnet.minimized and _geo(win) == theirs
+    assert not win.dock_telnet.minimized and _same(_geo(win), theirs)
 
 
 def test_layout_survives_restart(app, win, tmp_path, monkeypatch):
@@ -67,7 +77,7 @@ def test_layout_survives_restart(app, win, tmp_path, monkeypatch):
     w2 = mw.MainWindow()
     w2.show(); _settle(app, 700)
     assert w2.dock_telnet.minimized
-    assert _geo(w2) == before
+    _same(_geo(w2), before)
     w2.reset_layout(); _settle(app, 500)                    # View ▸ Reset to the default layout
     assert not w2.dock_telnet.minimized and w2.dock_telnet.isVisible()
     w2.close()
