@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QGridLayout, QHBoxL
 from ..core import needed
 from .widgets import StateToggle, text_color_for
 
+BAND_COL_W = 27          # px per band column: room for "160" / "✓●", no more
+
 MARK = {"needed_spotted": "●", "needed": "", "worked_spotted": "✓●", "worked": "✓"}
 
 
@@ -46,20 +48,28 @@ class NeededPane(QWidget):
         bar2 = QHBoxLayout()
         self.mult_box = QComboBox()
         self.mult_box.setFocusPolicy(Qt.NoFocus)
+        self.mult_box.setToolTip("Which multiplier: Countries, Zones…")
+        self.mult_box.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.mult_box.currentIndexChanged.connect(self.refresh)
         self.search = QLineEdit(placeholderText="Search")
         self.search.setToolTip("Search prefix / country / zone")
         self.search.setStyleSheet("font: 11pt;")
+        self.search.setMinimumWidth(50)
         self.search.textChanged.connect(self.refresh)
-        self.summary_lbl = QLabel()
-        bar2.addWidget(self.mult_box); bar2.addWidget(self.search, 1); bar2.addWidget(self.summary_lbl)
+        bar2.addWidget(self.mult_box); bar2.addWidget(self.search, 1)
         v.addLayout(bar2)
+        self.summary_lbl = QLabel()                 # own line, wraps: the pane can be narrow
+        self.summary_lbl.setWordWrap(True)
+        self.summary_lbl.setStyleSheet("font-size: 10pt;")
+        v.addWidget(self.summary_lbl)
 
         self.table = QTableWidget(0, 0)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(19)
+        self.table.verticalHeader().setDefaultSectionSize(18)
+        self.table.horizontalHeader().setMinimumSectionSize(20)
+        self.table.setStyleSheet("QTableWidget { font-size: 10pt; } QHeaderView::section { padding: 0 1px; }")
         self.table.cellDoubleClicked.connect(self._activate)
         self.table.setFocusPolicy(Qt.ClickFocus)
         v.addWidget(self.table, 1)
@@ -115,7 +125,7 @@ class NeededPane(QWidget):
         t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         for c in range(1, len(hdr)):
             t.horizontalHeader().setSectionResizeMode(c, QHeaderView.Fixed)
-            t.setColumnWidth(c, 38)
+            t.setColumnWidth(c, BAND_COL_W)
         t.setRowCount(len(rows))
         for r, row in enumerate(rows):
             t.setItem(r, 0, QTableWidgetItem(row.title))

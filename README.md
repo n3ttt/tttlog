@@ -94,6 +94,8 @@ Log, Score, Check Partial, Rate, Needed, Spots, and Telnet are panes. Each title
 
 View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once. You can also drag panes to rearrange them or stack them as tabs. The layout is remembered.
 
+Panes don't have to fill the window. Drag the inner edge of the left or right column (Log, Spots, Rate, Needed...) to make it smaller, and the window keeps an empty area in the middle. Drag the edge back to close the gap. To go back to panes always filling the window, untick View ▸ Leave empty space.
+
 ## Rate pane
 
 Shows the rate over the last 10 and last 100 QSOs (per hour, measured to now), the QSO counts for the last 60 and last 15 minutes, and the best 60-minute run so far.

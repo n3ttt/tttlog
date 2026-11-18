@@ -218,6 +218,7 @@ class MainWindow(QMainWindow):
         v.setSpacing(4)
         w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.setDockNestingEnabled(True)
+        self.set_free_layout(self.free_layout, save=False)
         # Bands: a narrow column of band buttons down the left edge
         self.band_pane = BandPane()
         self.band_pane.bandClicked.connect(self.go_to_band)
@@ -406,6 +407,10 @@ class MainWindow(QMainWindow):
         view.addAction(QAction("Restore all panes", self, shortcut="Ctrl+Shift+R",
                                triggered=self.restore_all_panes))
         view.addAction(QAction("Dock all pop-out windows", self, triggered=self.dock_all_panes))
+        self.free_layout_act = QAction("Leave empty space (panes don't have to fill the window)", self,
+                                       checkable=True, checked=self.free_layout,
+                                       toggled=self.set_free_layout)
+        view.addAction(self.free_layout_act)
         view.addSeparator()
         self.scale_menu = view.addMenu("Display size")
         cur = int(self.settings.value("ui_scale", 100) or 100)
@@ -1616,11 +1621,36 @@ class MainWindow(QMainWindow):
         left = self.width() * 62 // 100 - self.dock_bands.width()
         self.resizeDocks([self.dock_log, self.dock_spots], [left * 2 // 5, left * 3 // 5], Qt.Horizontal)
         self.resizeDocks([self.dock_entry], [left], Qt.Horizontal)
+        if self.centralWidget() is not None:           # empty space on: start with no gap
+            self.resizeDocks([self.dock_score], [self.width() - left - self.dock_bands.width() - 12],
+                             Qt.Horizontal)
         h = self.height()                               # small screens: shrink Score/Partial first
         self.resizeDocks(right, [min(215, h * 28 // 100), min(120, h * 16 // 100),
                                  max(150, h - min(215, h * 28 // 100) - min(120, h * 16 // 100) - 40)],
                          Qt.Vertical)
         self.resizeDocks([self.dock_entry], [self.dock_entry.content.sizeHint().height() + 24], Qt.Vertical)
+
+    # -- empty space between panes ----------------------------------------------
+    @property
+    def free_layout(self) -> bool:
+        v = self.settings.value("free_layout", True)
+        return v in (True, "true", "1", 1)
+
+    def set_free_layout(self, on: bool, save: bool = True):
+        """On: an empty area sits between the left and right pane columns, so panes
+        can be made smaller than the window (drag the edge between a column and the
+        empty area; drag it all the way to close the gap). Off: panes fill the window."""
+        if save:
+            self.settings.setValue("free_layout", bool(on))
+        if on and self.centralWidget() is None:
+            gap = QWidget(objectName="emptySpace")
+            gap.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+            gap.setMinimumSize(0, 0)
+            gap.setToolTip("Empty space: drag the pane edges to use it (View ▸ Leave empty space)")
+            self.setCentralWidget(gap)
+        elif not on and self.centralWidget() is not None:
+            old = self.takeCentralWidget()
+            old.deleteLater()
 
     def _fit_to_screen(self):
         """Keep the window on a screen it fits: a layout saved on a big monitor
