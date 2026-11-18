@@ -9,3 +9,4 @@ def _no_real_network_settings(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "NETWORK_FILE", tmp_path / "net-cfg" / "network.yaml")
     monkeypatch.setattr(config, "NODE_ID_FILE", tmp_path / "net-cfg" / "node_id")
     monkeypatch.setattr(config, "WSJTX_FILE", tmp_path / "net-cfg" / "wsjtx.yaml")
+    monkeypatch.setattr(config, "RIG_FILE", tmp_path / "net-cfg" / "radio.yaml")

@@ -16,6 +16,21 @@ COLORS_FILE = CONFIG_DIR / "colors.yaml"
 NETWORK_FILE = CONFIG_DIR / "network.yaml"
 NODE_ID_FILE = CONFIG_DIR / "node_id"
 WSJTX_FILE = CONFIG_DIR / "wsjtx.yaml"
+RIG_FILE = CONFIG_DIR / "radio.yaml"
+
+# Radio (CAT). "control" off = tttlog only follows the radio and never sends it
+# anything but read queries; on = band buttons, typed kHz and spots tune it.
+DEFAULT_RIG = {
+    "enabled": False,
+    "dialect": "flex",          # flex | kenwood | yaesu (see tttlog/core/rig.py)
+    "connection": "tcp",        # tcp | serial
+    "host": "127.0.0.1",
+    "port": 5002,               # SmartSDR for Mac's CAT port
+    "serial_port": "",
+    "baud": 38400,
+    "poll_ms": 400,
+    "control": False,
+}
 
 # WSJT-X (and JTDX / MSHV, which speak the same protocol): tttlog listens for
 # the UDP packet WSJT-X sends when you log a QSO there. Match WSJT-X's
@@ -192,6 +207,18 @@ def load_wsjtx() -> dict:
 def save_wsjtx(cfg: dict) -> None:
     WSJTX_FILE.parent.mkdir(parents=True, exist_ok=True)
     WSJTX_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def load_rig() -> dict:
+    cfg = dict(DEFAULT_RIG)
+    if RIG_FILE.exists():
+        cfg.update(yaml.safe_load(RIG_FILE.read_text()) or {})
+    return cfg
+
+
+def save_rig(cfg: dict) -> None:
+    RIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    RIG_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
 
 
 def node_id() -> str:

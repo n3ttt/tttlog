@@ -295,3 +295,90 @@ class WsjtxDialog(QDialog):
         out.update(enabled=self.enabled.isChecked(),
                    address=self.address.text().strip() or "127.0.0.1", port=self.port.value())
         return out
+
+
+class RadioDialog(QDialog):
+    """Config ▸ Radio: CAT connection (Flex via SmartSDR, Kenwood/Elecraft, Yaesu)."""
+
+    def __init__(self, cfg: dict, state: str = "", parent=None):
+        from ..core.rig import DIALECTS
+        super().__init__(parent)
+        self.setWindowTitle("Radio")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.enabled = QCheckBox("Connect to the radio")
+        self.enabled.setChecked(bool(cfg.get("enabled")))
+        self.dialect = QComboBox()
+        for key, name in DIALECTS.items():
+            self.dialect.addItem(name, key)
+        self.dialect.setCurrentIndex(max(0, self.dialect.findData(cfg.get("dialect", "flex"))))
+        self.conn = QComboBox()
+        self.conn.addItem("Network (TCP)", "tcp")
+        self.conn.addItem("Serial / USB", "serial")
+        self.conn.setCurrentIndex(max(0, self.conn.findData(cfg.get("connection", "tcp"))))
+        self.host = QLineEdit(str(cfg.get("host", "127.0.0.1")))
+        self.port = QSpinBox(); self.port.setRange(1, 65535); self.port.setValue(int(cfg.get("port", 5002)))
+        self.serial = QComboBox(); self.serial.setEditable(True)
+        try:
+            from PySide6.QtSerialPort import QSerialPortInfo
+            for info in QSerialPortInfo.availablePorts():
+                self.serial.addItem(f"{info.portName()}  {info.description()}".strip(), info.portName())
+        except ImportError:
+            pass
+        cur = str(cfg.get("serial_port", ""))
+        i = self.serial.findData(cur)
+        if i >= 0:
+            self.serial.setCurrentIndex(i)
+        else:
+            self.serial.setEditText(cur)
+        self.baud = QComboBox(); self.baud.setEditable(True)
+        for b in ("4800", "9600", "19200", "38400", "57600", "115200"):
+            self.baud.addItem(b)
+        self.baud.setCurrentText(str(cfg.get("baud", 38400)))
+        self.control = QCheckBox("Let tttlog tune the radio (band buttons, typed kHz, spots, mode)")
+        self.control.setChecked(bool(cfg.get("control")))
+        note = QLabel(
+            "Without that box ticked tttlog only reads the radio: it follows the dial and logs the real "
+            "frequency and mode, and never changes anything on the radio.\n"
+            "FlexRadio on a Mac: SmartSDR for Mac's CAT port (default 127.0.0.1, port 5002). "
+            "On Windows: a TCP port from SmartSDR CAT.\n"
+            "Yaesu FTDX10: Serial / USB, the radio's Enhanced COM port, at the radio's CAT RATE."
+            + (f"\nNow: {state}" if state else ""))
+        note.setWordWrap(True)
+        f.addRow(self.enabled)
+        f.addRow("Radio", self.dialect)
+        f.addRow("Connection", self.conn)
+        f.addRow("Host", self.host)
+        f.addRow("TCP port", self.port)
+        f.addRow("Serial port", self.serial)
+        f.addRow("Baud", self.baud)
+        f.addRow(self.control)
+        f.addRow(note)
+        f.addRow(_buttons(self))
+        self.conn.currentIndexChanged.connect(self._sync)
+        self._sync()
+
+    def _sync(self):
+        tcp = self.conn.currentData() == "tcp"
+        for w in (self.host, self.port):
+            w.setEnabled(tcp)
+        for w in (self.serial, self.baud):
+            w.setEnabled(not tcp)
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        text = self.serial.currentText().strip()
+        idx = self.serial.currentIndex()
+        if idx >= 0 and text == self.serial.itemText(idx):
+            port = self.serial.itemData(idx)                # picked from the list
+        else:
+            port = text.split()[0] if text else ""          # typed by hand
+        try:
+            baud = int(self.baud.currentText())
+        except ValueError:
+            baud = 38400
+        out.update(enabled=self.enabled.isChecked(), dialect=self.dialect.currentData(),
+                   connection=self.conn.currentData(), host=self.host.text().strip() or "127.0.0.1",
+                   port=self.port.value(), serial_port=port, baud=baud,
+                   control=self.control.isChecked())
+        return out
