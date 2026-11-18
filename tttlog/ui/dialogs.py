@@ -39,9 +39,20 @@ class ClusterDialog(QDialog):
         self.auto_spot.setChecked(bool(cfg.get("auto_spot_sp", False)))
         self.init = QLineEdit("; ".join(cfg.get("init_commands", [])))
         self.init.setPlaceholderText("e.g.  set/skimmer; sh/dx 30")
+        self.kind = QComboBox()
+        for key, text in [("auto", "Detect from login"), ("ar", "AR-Cluster (e.g. W3LPL, K1TTT)"),
+                          ("cc", "CC Cluster (e.g. VE7CC)"), ("spider", "DXSpider")]:
+            self.kind.addItem(text, key)
+        self.kind.setCurrentIndex(max(0, self.kind.findData(cfg.get("cluster_type", "auto"))))
+        self.kind.setToolTip("Decides which commands 'Send this filter to the cluster' uses")
+        self.share = QCheckBox("Share my cluster connection with stations on the local network")
+        self.share.setChecked(bool(cfg.get("share_cluster", True)))
+        self.use_net = QCheckBox("When I'm not connected, use a networked station's connection")
+        self.use_net.setChecked(bool(cfg.get("use_network_cluster", True)))
         for lbl, w in [("Host", self.host), ("Port", self.port), ("Login call", self.login),
                        ("Keep spots for", self.age), ("", self.auto), ("", self.auto_spot),
-                       ("Commands after login", self.init)]:
+                       ("Commands after login", self.init), ("Cluster software", self.kind),
+                       ("", self.share), ("", self.use_net)]:
             f.addRow(lbl, w)
         f.addRow(_buttons(self))
 
@@ -50,7 +61,9 @@ class ClusterDialog(QDialog):
         out.update(host=self.host.text().strip(), port=self.port.value(),
                    login=self.login.text().strip().upper(), max_age_min=self.age.value(),
                    auto_connect=self.auto.isChecked(), auto_spot_sp=self.auto_spot.isChecked(),
-                   init_commands=[c.strip() for c in self.init.text().split(";") if c.strip()])
+                   init_commands=[c.strip() for c in self.init.text().split(";") if c.strip()],
+                   cluster_type=self.kind.currentData(), share_cluster=self.share.isChecked(),
+                   use_network_cluster=self.use_net.isChecked())
         return out
 
 

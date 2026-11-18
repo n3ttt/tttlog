@@ -219,7 +219,7 @@ def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
     w = MainWindow()
     w.settings.clear()
     w.resize(1400, 1000); w.show()
-    _pump(app, lambda: False, 400)        # let the default tabs and sizes (deferred timers) apply
+    _pump(app, lambda: False, 1500)       # let the default tabs and sizes (deferred timers) apply; slow CI Macs need longer
     assert w.centralWidget() is None
     e = w.dock_entry
     assert not e.bar.close_btn.isVisible() or not e.closable

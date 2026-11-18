@@ -89,14 +89,57 @@ def test_three_stations_relay_and_reconnect(app, tmp_path):
         n.stop()
 
 
-def test_wrong_contest_or_network_is_refused(app, tmp_path):
+def test_different_contest_links_with_warning_but_keeps_logs_apart(app, tmp_path):
     a = station(tmp_path, "A")
     b = station(tmp_path, "B", contest="ARRL-DX-SSB", peers=[f"127.0.0.1:{a.port}"])
     c = station(tmp_path, "C", net="OTHER", peers=[f"127.0.0.1:{a.port}"])
-    a.sync.local_put(qso("DL1ABC"))
-    assert wait(lambda: "different contest" in a.peers.get("node-B", {}).get("note", ""))
-    assert wait(lambda: "network" in a.peers.get("node-C", {}).get("note", ""))
-    assert not a.linked() and b.sync.log.all() == [] and c.sync.log.all() == []
+    warnings = []
+    a.contestWarning.connect(warnings.append)
+    a.publish(a.sync.local_put(qso("DL1ABC")))
+    assert wait(lambda: a.linked() and b.linked())                  # linked: not a hard fault
+    assert wait(lambda: warnings and "ARRL-DX-SSB" in warnings[0])  # but warned, once
+    assert "log not shared" in a.mismatch(a.peers["node-B"])
+    a.publish(a.sync.local_put(qso("JA1AA")))
+    wait(lambda: False, 0.5)
+    assert b.sync.log.all() == []                                   # logs stay apart
+    said = []
+    b.talkReceived.connect(lambda who, text: said.append(text))
+    a.talk("you're on the wrong contest")                           # talk still works
+    assert wait(lambda: said == ["you're on the wrong contest"])
+    assert wait(lambda: "network" in a.peers.get("node-C", {}).get("note", ""))   # other network: refused
+    assert len(warnings) == 1
+
+    # B opens the same contest: the link is renegotiated and B catches up
+    b.set_log(b.sync, "CQ-WW-SSB")
+    assert wait(lambda: sorted(x.call for x in b.sync.log.all()) == ["DL1ABC", "JA1AA"], 8)
+    assert a.mismatch(a.peers["node-B"]) == ""
+    for n in (a, b, c):
+        n.stop()
+
+
+def test_shared_cluster_connection(app, tmp_path):
+    a = station(tmp_path, "A")                                      # connected to the cluster
+    b = station(tmp_path, "B", peers=[f"127.0.0.1:{a.port}"])
+    c = station(tmp_path, "C", contest="ARRL-DX-SSB", peers=[f"127.0.0.1:{b.port}"])   # via B, other contest
+    assert wait(lambda: len(b.linked()) == 2)
+    a.set_cluster_up(True)
+    assert wait(lambda: b.cluster_source() and c.cluster_source())
+    assert c.cluster_source()["name"] == "A"
+
+    got_b, got_c, cmds = [], [], []
+    b.clusterLines.connect(lambda src, lines: got_b.extend(lines))
+    c.clusterLines.connect(lambda src, lines: got_c.extend(lines))
+    a.clusterCommand.connect(lambda who, text: cmds.append((who, text)))
+    spot = "DX de W3LPL:     14205.0  DL1ABC       59 loud           1234Z"
+    a.publish_cluster(["Welcome to the node", spot])
+    assert wait(lambda: got_b == ["Welcome to the node", spot] and got_c == got_b)
+
+    assert c.send_cluster_command("dx 14025.0 JA1AA") == "A"      # relayed through B
+    assert wait(lambda: cmds == [("C", "dx 14025.0 JA1AA")])
+
+    a.set_cluster_up(False)                                         # A drops the cluster
+    assert wait(lambda: b.cluster_source() is None)
+    assert b.send_cluster_command("sh/dx") is None
     for n in (a, b, c):
         n.stop()
 
@@ -163,3 +206,71 @@ def test_two_windows_share_dupes(app, tmp_path, monkeypatch):
     assert mult.log_table.item(0, 8).text() == "RUN"
     for w in wins:
         w.close()
+
+
+def test_two_windows_share_one_cluster_connection(app, tmp_path, monkeypatch):
+    """RUN is logged in to the cluster; MULT (not connected) gets its spots and
+    sends its spot through RUN. The two are on different contests: warned, still linked."""
+    from PySide6.QtCore import QSettings
+    from PySide6.QtNetwork import QHostAddress, QTcpServer
+    from tttlog import config
+    from tttlog.contests.engine import Station
+    import tttlog.ui.main_window as mw
+    for name in ("STATION_FILE", "MACROS_FILE", "CLUSTER_FILE", "COLORS_FILE"):
+        monkeypatch.setattr(config, name, tmp_path / "cfg" / getattr(config, name).name)
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / "cfg")
+    config.save_station(Station(call="N3TTT", state="DE", cq_zone=5))
+
+    server = QTcpServer(); assert server.listen(QHostAddress.LocalHost, 0)
+    clients, received = [], []
+
+    def on_conn():
+        c = server.nextPendingConnection()
+        clients.append(c)
+        c.readyRead.connect(lambda c=c: received.append(bytes(c.readAll()).decode()))
+        c.write(b"Welcome to W3LPL AR-Cluster node\r\nPlease enter your call: ")
+    server.newConnection.connect(on_conn)
+    config.save_cluster({**config.DEFAULT_CLUSTER, "host": "127.0.0.1", "port": server.serverPort()})
+
+    wins = []
+    for name, contest in (("RUN", "ARRL-DX-SSB"), ("MULT", "CQ-WW-SSB")):
+        ini = str(tmp_path / f"{name}.ini")
+        monkeypatch.setattr(mw, "QSettings", lambda *a, ini=ini: QSettings(ini, QSettings.IniFormat))
+        peers = [f"127.0.0.1:{wins[0].net.port}"] if wins else []
+        cfg = {**config.DEFAULT_NETWORK, "enabled": True, "station_name": name, "net_name": "T",
+               "tcp_port": 0, "udp_port": 0, "peers": peers}
+        monkeypatch.setattr(config, "load_network", lambda cfg=cfg: dict(cfg))
+        monkeypatch.setattr(config, "node_id", lambda name=name: f"node-{name}")
+        w = mw.MainWindow()
+        db = tmp_path / f"{name}.db"
+        l = Log(db); l.set_meta("contest_id", contest); l.close()
+        w.open_log(db)
+        wins.append(w)
+    run, mult = wins
+    assert wait(lambda: run.net.linked() and mult.net.linked())
+    assert wait(lambda: "log not shared" in mult.banner_lbl.text() or "NOT shared" in mult.banner_lbl.text())
+    assert wait(lambda: mult.network_pane.table.rowCount() == 2)
+    assert any("log not shared" in (mult.network_pane.table.item(r, 7).text())
+               for r in range(mult.network_pane.table.rowCount()))
+
+    run.cluster_connect(True)
+    assert wait(lambda: clients and any("N3TTT" in r for r in received))        # RUN logged in
+    assert run.cluster_kind == "ar"
+    assert wait(lambda: mult.net.cluster_source() is not None)
+    assert "Using RUN's cluster connection" in mult.telnet_pane.status_lbl.text()
+
+    clients[0].write(b"DX de W3LPL:     14205.0  DL1ABC       59 loud           1234Z\r\n"
+                     b"DX de K1TTT-#:   14025.0  JA1AA        CW 20 dB 28 WPM CQ  1234Z\r\n")
+    assert wait(lambda: len(mult.spots_pane.spots) == 2)                        # came over the LAN
+    assert mult.cluster_kind == "ar"
+    mult.spots_pane._change_filter(skimmer="no")
+    assert [s.call for s in mult.spots_pane.filtered_spots()] == ["DL1ABC"]
+    assert len(run.spots_pane.filtered_spots()) == 2                          # filters are per station
+
+    mult.telnet_pane.cmd.setText("sh/dx 5"); mult._cluster_cmd()                 # typed at MULT
+    assert wait(lambda: any("sh/dx 5" in r for r in received))
+    mult.send_filter_to_cluster()                                               # out through RUN's login
+    assert wait(lambda: any("set dx filter not skimmer" in r for r in received))
+    for w in wins:
+        w.close()
+    server.close()
