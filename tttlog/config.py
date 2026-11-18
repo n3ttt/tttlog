@@ -17,6 +17,21 @@ NETWORK_FILE = CONFIG_DIR / "network.yaml"
 NODE_ID_FILE = CONFIG_DIR / "node_id"
 WSJTX_FILE = CONFIG_DIR / "wsjtx.yaml"
 RIG_FILE = CONFIG_DIR / "radio.yaml"
+KEYER_FILE = CONFIG_DIR / "keyer.yaml"
+
+# Voice + CW keyer. Nothing is ever transmitted unless "allow_tx" is on.
+DEFAULT_KEYER = {
+    "allow_tx": False,
+    "mic": "",                  # audio input to record messages from ("" = system default)
+    "radio_out": "",            # audio output that goes to the radio (Flex DAX TX, rig USB codec)
+    "ptt": "cat",               # cat | rts | dtr | vox (radio keys itself on audio)
+    "cw": "cat",                # cat (radio sends the text) | dtr | rts (tttlog keys a serial line)
+    "line_port": "",            # serial port for DTR/RTS keying / PTT (e.g. the FTDX10's Standard COM port)
+    "wpm": 28,
+    "ptt_lead_ms": 120,         # PTT on -> audio starts
+    "ptt_tail_ms": 150,         # audio ends -> PTT off
+    "max_tx_secs": 90,          # hard stop: never stay keyed longer than this
+}
 
 # Radio (CAT). "control" off = tttlog only follows the radio and never sends it
 # anything but read queries; on = band buttons, typed kHz and spots tune it.
@@ -83,7 +98,7 @@ DEFAULT_CLUSTER = {
 # Action tokens: {CLEAR} wipes the entry line; {SPOT} spots the last QSO
 # (call + frequency) to the DX cluster.
 # SSB: text is shown + the WAV file (in ~/.tttlog/wav/<MYCALL>/) is played by
-# the voice keyer (milestone M1). CW: text is sent by the keyer.
+# the voice keyer (Ctrl+Shift+F-key records it). CW: the text is sent by the keyer.
 DEFAULT_MACROS = {
     "SSB": {
         "RUN": [
@@ -254,3 +269,15 @@ def expand(text: str, station: Station, call: str, exch: str, rst: str = "59") -
     return (text.replace("{MYCALL}", station.call).replace("{CALL}", call)
             .replace("{EXCH}", exch).replace("{RST}", rst)
             .replace("{STATE}", station.state).replace("{ZONE}", str(station.cq_zone)))
+
+
+def load_keyer() -> dict:
+    cfg = dict(DEFAULT_KEYER)
+    if KEYER_FILE.exists():
+        cfg.update(yaml.safe_load(KEYER_FILE.read_text()) or {})
+    return cfg
+
+
+def save_keyer(cfg: dict) -> None:
+    KEYER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    KEYER_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))

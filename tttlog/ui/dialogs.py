@@ -382,3 +382,184 @@ class RadioDialog(QDialog):
                    port=self.port.value(), serial_port=port, baud=baud,
                    control=self.control.isChecked())
         return out
+
+
+def _serial_combo(current: str) -> QComboBox:
+    box = QComboBox(); box.setEditable(True)
+    box.addItem("(none)", "")
+    try:
+        from PySide6.QtSerialPort import QSerialPortInfo
+        for info in QSerialPortInfo.availablePorts():
+            box.addItem(f"{info.portName()}  {info.description()}".strip(), info.portName())
+    except ImportError:
+        pass
+    i = box.findData(current)
+    if i >= 0:
+        box.setCurrentIndex(i)
+    else:
+        box.setEditText(current)
+    return box
+
+
+def _serial_value(box: QComboBox) -> str:
+    text, idx = box.currentText().strip(), box.currentIndex()
+    if idx >= 0 and text == box.itemText(idx):
+        return box.itemData(idx) or ""
+    return text.split()[0] if text and text != "(none)" else ""
+
+
+class KeyerDialog(QDialog):
+    """Config ▸ Voice & CW keyer: audio devices, PTT, CW keying, and recording messages."""
+
+    def __init__(self, cfg: dict, keyer, macros: dict, wav_dir: Path, parent=None):
+        from ..core import keyer as K
+        from .keyer import audio_inputs, audio_outputs
+        super().__init__(parent)
+        self.setWindowTitle("Voice & CW keyer")
+        self.resize(640, 640)
+        self._cfg, self.keyer, self.wav_dir, self.K = dict(cfg), keyer, wav_dir, K
+        v = QVBoxLayout(self)
+        f = QFormLayout()
+        self.allow = QCheckBox("Allow tttlog to transmit (key the radio)")
+        self.allow.setChecked(bool(cfg.get("allow_tx")))
+        self.mic = QComboBox(); self.mic.addItem("System default", "")
+        for d in audio_inputs():
+            self.mic.addItem(d, d)
+        self.mic.setCurrentIndex(max(0, self.mic.findData(cfg.get("mic", ""))))
+        self.out = QComboBox(); self.out.addItem("System default", "")
+        for d in audio_outputs():
+            self.out.addItem(d, d)
+        self.out.setCurrentIndex(max(0, self.out.findData(cfg.get("radio_out", ""))))
+        self.ptt = QComboBox()
+        for key, label in (("cat", "Radio CAT command"), ("rts", "RTS on the keying port"),
+                           ("dtr", "DTR on the keying port"), ("vox", "None (radio uses VOX)")):
+            self.ptt.addItem(label, key)
+        self.ptt.setCurrentIndex(max(0, self.ptt.findData(cfg.get("ptt", "cat"))))
+        self.cw = QComboBox()
+        for key, label in (("cat", "Radio sends the text (CAT: Flex, Kenwood, Elecraft)"),
+                           ("dtr", "tttlog keys DTR on the keying port"),
+                           ("rts", "tttlog keys RTS on the keying port")):
+            self.cw.addItem(label, key)
+        self.cw.setCurrentIndex(max(0, self.cw.findData(cfg.get("cw", "cat"))))
+        self.line = _serial_combo(str(cfg.get("line_port", "")))
+        self.wpm = QSpinBox(); self.wpm.setRange(10, 60); self.wpm.setValue(int(cfg.get("wpm", 28)))
+        self.wpm.setSuffix(" wpm")
+        self.lead = QSpinBox(); self.lead.setRange(0, 1000); self.lead.setSuffix(" ms")
+        self.lead.setValue(int(cfg.get("ptt_lead_ms", 120)))
+        self.tail = QSpinBox(); self.tail.setRange(0, 2000); self.tail.setSuffix(" ms")
+        self.tail.setValue(int(cfg.get("ptt_tail_ms", 150)))
+        f.addRow(self.allow)
+        f.addRow("Microphone (recording)", self.mic)
+        f.addRow("Audio to the radio", self.out)
+        f.addRow("PTT", self.ptt)
+        f.addRow("CW", self.cw)
+        f.addRow("Keying serial port", self.line)
+        f.addRow("CW speed", self.wpm)
+        f.addRow("PTT before audio", self.lead)
+        f.addRow("PTT after audio", self.tail)
+        v.addLayout(f)
+        note = QLabel(
+            "FlexRadio: pick the DAX TX audio device and turn DAX on for the transmit slice.  "
+            "Yaesu FTDX10: audio is the radio's USB Audio CODEC (menu SSB MOD SOURCE = REAR); CW needs "
+            "DTR keying on the radio's Standard COM port (menu PC KEYING = DTR).\n"
+            "Keys: F1–F12 send · Ctrl+Shift+F1–F12 record that key's message · Esc stops · "
+            "PgUp / PgDn CW speed.")
+        note.setWordWrap(True)
+        v.addWidget(note)
+
+        v.addWidget(QLabel("<b>Voice messages</b> (SSB function keys)"))
+        self.msgs = QTableWidget(0, 4)
+        self.msgs.setHorizontalHeaderLabels(["Message", "File", "Length", ""])
+        self.msgs.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.msgs.verticalHeader().setVisible(False)
+        v.addWidget(self.msgs, 1)
+        row = QHBoxLayout()
+        self.rec_btn = QPushButton("● Record"); self.rec_btn.clicked.connect(self._record)
+        self.play_btn = QPushButton("▶ Play here"); self.play_btn.clicked.connect(self._play)
+        self.stop_btn = QPushButton("■ Stop"); self.stop_btn.clicked.connect(self._stop)
+        self.status = QLabel()
+        for w in (self.rec_btn, self.play_btn, self.stop_btn):
+            row.addWidget(w)
+        row.addWidget(self.status, 1)
+        v.addLayout(row)
+        v.addWidget(_buttons(self))
+        self._files: list[tuple[str, str]] = []
+        seen = set()
+        for page in ("RUN", "SP"):
+            for m in macros.get("SSB", {}).get(page, []):
+                w = m.get("wav", "")
+                if w and w not in seen:
+                    seen.add(w)
+                    self._files.append((f"{page} {m.get('key', '')} {m.get('label', '')}".strip(), w))
+        self._fill()
+        self.keyer.stateChanged.connect(self._on_state)
+        self.keyer.levelChanged.connect(self._on_level)
+        self.keyer.recorded.connect(self._on_recorded)
+        self.keyer.problem.connect(self._on_problem)
+
+    def _fill(self):
+        cur = self.msgs.currentRow()
+        self.msgs.setRowCount(len(self._files))
+        for r, (label, name) in enumerate(self._files):
+            path = self.wav_dir / name
+            secs = self.K.wav_seconds(path) if path.exists() else 0
+            self.msgs.setItem(r, 0, QTableWidgetItem(label))
+            self.msgs.setItem(r, 1, QTableWidgetItem(name))
+            self.msgs.setItem(r, 2, QTableWidgetItem(f"{secs:.1f} s" if secs else "—"))
+            self.msgs.setItem(r, 3, QTableWidgetItem("" if secs else "not recorded"))
+        self.msgs.selectRow(max(0, cur))
+
+    def _selected(self) -> Path | None:
+        r = self.msgs.currentRow()
+        return self.wav_dir / self._files[r][1] if 0 <= r < len(self._files) else None
+
+    def _record(self):
+        p = self._selected()
+        if p is None:
+            self.status.setText("Pick a message first"); return
+        if self.keyer.recorder.active:
+            self.keyer.stop_recording(); return
+        self.keyer.record(p, mic=self.mic.currentData())
+
+    def _play(self):
+        p = self._selected()
+        if p is not None and p.exists():
+            self.keyer.preview(p)
+
+    def _stop(self):
+        if self.keyer.recorder.active:
+            self.keyer.stop_recording()
+        self.keyer.stop()
+
+    def _on_state(self, s: str):
+        self.status.setText(s)
+        self.rec_btn.setText("■ Stop recording" if self.keyer.recorder.active else "● Record")
+
+    def _on_recorded(self, _path: str):
+        self._fill()
+
+    def _on_problem(self, why: str):
+        self.status.setText(why)
+
+    def _on_level(self, lvl: float):
+        if self.keyer.recorder.active:
+            bars = "█" * int(lvl * 20)
+            self.status.setText(f"● Recording {self.keyer.recorder.seconds():.1f} s  {bars}")
+
+    def done(self, r):
+        self._stop()
+        for sig, slot in ((self.keyer.stateChanged, self._on_state), (self.keyer.levelChanged, self._on_level),
+                          (self.keyer.recorded, self._on_recorded), (self.keyer.problem, self._on_problem)):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        super().done(r)
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(allow_tx=self.allow.isChecked(), mic=self.mic.currentData(),
+                   radio_out=self.out.currentData(), ptt=self.ptt.currentData(), cw=self.cw.currentData(),
+                   line_port=_serial_value(self.line), wpm=self.wpm.value(),
+                   ptt_lead_ms=self.lead.value(), ptt_tail_ms=self.tail.value())
+        return out

@@ -4,7 +4,7 @@ A one-window amateur radio contest logger for **macOS, Windows, and Linux**.
 Keyboard-first, with contest rules kept in files, and built so you never lose a QSO.
 
 > Status: **v0.1, milestone M0.** Logging, dupe and multiplier checks, scoring, editable F-keys, and ADIF/Cabrillo export all work.
-> Rig control and the voice keyer come in M1. First live target: **ARRL DX SSB, March 6–7, 2027**.
+> Rig control, the voice keyer and CW keying are in (M1) and still being tried on real radios. First live target: **ARRL DX SSB, March 6–7, 2027**.
 
 ## Install on a Mac (no Python needed)
 
@@ -60,10 +60,12 @@ The same `build_app.py` builds a macOS version on a Mac.
 | Type call → **Space** | Jump to exchange (fills in the CQ zone when the contest uses one) |
 | **Enter** | ESM: empty call → F1 · call but no exchange → F2 · complete → log + F3 (Run) |
 | Type `14250` in Call → Enter | Change frequency (until rig control lands) |
-| **F1–F12** | Macros; the set changes with mode (SSB/CW) and Run/S&P |
+| **F1–F12** | Macros; the set changes with mode (SSB/CW) and Run/S&P. SSB plays the key's recording, CW sends the text (see Voice & CW keyer) |
+| **Ctrl+Shift+F1–F12** | Record that key's voice message (press again or Esc to stop) |
+| **PgUp / PgDn** | CW speed ±2 wpm |
 | **Ctrl+R** | Toggle Run / S&P |
 | **Ctrl+F** | Set frequency |
-| **Esc** | Wipe the entry line |
+| **Esc** | Stop sending (or recording); when nothing is being sent, wipe the entry line |
 | Double-click a log row | Edit QSO |
 | **Ctrl+D** | Delete the selected QSO |
 
@@ -196,6 +198,22 @@ tttlog follows the radio: the frequency, band button and mode track the dial, an
 
 By default tttlog **only reads** the radio and never changes it. In that mode, band buttons and typed frequencies are refused with a reminder to tune the radio, so a QSO can't be logged on a frequency the radio isn't on. Tick **Let tttlog tune the radio** to have band buttons, typed kHz, clicked spots and mode changes tune it. Digital modes show on the radio as DIGU / DATA-USB; tttlog keeps whichever of FT8 / FT4 you picked.
 
+## Voice & CW keyer
+
+Config ▸ Voice & CW keyer… sets it up. Nothing is ever transmitted until you tick **Allow tttlog to transmit**.
+
+**Recording (no other program needed):** press **Ctrl+Shift+F1** (etc.) in SSB, speak, and press it again or **Esc**. Or use the list of messages in Config ▸ Voice & CW keyer: pick one, **● Record**, **■ Stop**, **▶ Play here** to listen on this computer. Recordings are WAV files in `~/.tttlog/wav/<your call>/`, named in Config ▸ Function-key macros (WAV column); a key with no file gets one when you first record it. Up to 30 seconds each.
+
+**Sending:** in SSB (and AM/FM), F-keys key the radio (PTT), play the recording to the radio's audio input, and unkey. In CW they send the macro text. **Esc** stops at once. A hard time limit (90 s, or the message length plus a few seconds) unkeys the radio if anything ever sticks, and closing tttlog releases PTT.
+
+| Setting | FlexRadio (SmartSDR) | Yaesu FTDX10 | Kenwood / Elecraft |
+|---|---|---|---|
+| Audio to the radio | the DAX TX device; turn on DAX for the transmit slice | USB Audio CODEC; radio menu SSB MOD SOURCE = REAR | the radio's USB audio |
+| PTT | Radio CAT command (`ZZTX1;`) | Radio CAT command (`TX1;`) | Radio CAT command (`TX1;`) |
+| CW | Radio sends the text (`KY`) | DTR on the Standard COM port (radio menu PC KEYING = DTR); CAT can't send text | Radio sends the text (`KY`) |
+
+PTT can also be RTS or DTR on a keying serial port, or none (VOX). CW can also be a keyed DTR/RTS line on any radio (a USB keying interface, for example). The CW speed is set in the dialog and with PgUp/PgDn.
+
 ## WSJT-X (FT8 / FT4)
 
 tttlog can log the QSOs you log in WSJT-X (or JTDX / MSHV). It only listens; it doesn't control WSJT-X.
@@ -219,6 +237,7 @@ Settings live in `~/.tttlog/`:
 - `macros.yaml`: F-keys (Config ▸ Function-key macros). Besides the text fields, `{CLEAR}` wipes the entry line and `{SPOT}` spots the last QSO, so you can put Spot on any key.
 - `cluster.yaml`: DX cluster host, login, and options (Config ▸ DX cluster)
 - `colors.yaml`: colors and checkboxes for the Needed and Spots windows
+- `keyer.yaml`: voice & CW keyer (Config ▸ Voice & CW keyer); recordings are in `wav/<your call>/`
 - `network.yaml`: local network settings (Config ▸ Local network); `node_id` tells this install apart from the other stations
 
 ## Safety
@@ -228,7 +247,7 @@ If the database is ever damaged, `Log.recover_from_journal()` rebuilds it.
 
 ## Roadmap
 
-- **M1 (Dec):** rig control — done: Flex (SmartSDR CAT), Kenwood/Elecraft, Yaesu CAT (FTDX10 still to try on the radio); still to do: voice keyer (WAV through the radio's USB audio + CAT PTT)
+- **M1 (Dec):** rig control — done: Flex (SmartSDR CAT), Kenwood/Elecraft, Yaesu CAT (FTDX10 still to try on the radio); voice keyer (record in tttlog, play through the radio's audio + PTT) and CW (CAT KY or DTR/RTS keying) — to try on the radios
 - **M2 (Jan):** DX cluster + bandmap, N1MM-format UDP broadcast (World Radio League, etc.), online scoreboard posting
 - **M3 (Feb):** Windows/Linux builds, a full dry run
 - Later: SO2R, more contests

@@ -170,6 +170,20 @@ class RigControl(QObject):
                 self.radio_mode = val
                 self.modeChanged.emit(val)
 
+    # -- keying (the keyer decides whether transmitting is allowed) ----------
+    @property
+    def dialect_name(self) -> str:
+        return self.cfg.get("dialect", "flex")
+
+    def send_raw(self, cmd: bytes) -> bool:
+        """Send a command (PTT, CW text) to a connected radio."""
+        if self.dev is None or not self.dev.isOpen() or not self.is_connected():
+            return False
+        self.dev.write(cmd)
+        if hasattr(self.dev, "flush"):
+            self.dev.flush()
+        return True
+
     # -- writing (only with control on) ------------------------------------
     def set_freq(self, khz: float) -> bool:
         if not (self.control and self.dev is not None and self.dev.isOpen()):

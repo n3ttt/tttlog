@@ -86,6 +86,10 @@ def build_mac_dmg() -> int:
         subprocess.run(["plutil", "-replace", key, "-string", ver, str(plist)], check=True)
     subprocess.run(["plutil", "-replace", "CFBundleIdentifier", "-string", "com.n3ttt.tttlog", str(plist)],
                    check=True)
+    # Recording voice-keyer messages: without this macOS refuses (or kills the app on) mic access.
+    subprocess.run(["plutil", "-replace", "NSMicrophoneUsageDescription", "-string",
+                    "tttlog records your voice-keyer messages (CQ, exchange, TU) from the microphone.",
+                    str(plist)], check=True)
     # Ad-hoc signature: required on Apple Silicon; not a Developer ID, so first launch needs
     # System Settings > Privacy & Security > Open Anyway (see README).
     # A synced folder (iCloud Documents) tags files with Finder info that codesign rejects

@@ -42,7 +42,7 @@ def test_log_flow(app, tmp_path, monkeypatch):
     w.call.setText("DL1ABC"); w._live_check("DL1ABC")
     assert "NEW MULT" in w.banner_lbl.text()
     w.on_enter()                                        # no exch -> sends F2
-    assert "TX F2" in w.tx_lbl.text()
+    assert "F2: 59" in w.tx_lbl.text()                  # no recording yet: shows the text
     w.exch.setText("100"); w.on_enter()                 # logs
     assert len(w.qsos) == 1 and w.qsos[0].points == 3
 

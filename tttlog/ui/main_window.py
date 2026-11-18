@@ -28,7 +28,7 @@ from ..core.rig import from_logger_mode, to_logger_mode
 from ..export.adif import export_adif, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
-from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
+from .dialogs import (ClusterDialog, EditQsoDialog, KeyerDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
                       WsjtxDialog,
                       StationDialog)
 from .docks import Pane
@@ -37,7 +37,10 @@ from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
 from .rate_pane import RatePane
 from .rig_control import RigControl
+from .keyer import Keyer
 from .wsjtx_listener import WsjtxListener
+
+VOICE_MODES = ("SSB", "AM", "FM")
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
@@ -75,6 +78,7 @@ class MainWindow(QMainWindow):
         self.net_cfg = config.load_network()
         self.wsjtx_cfg = config.load_wsjtx()
         self.rig_cfg = config.load_rig()
+        self.keyer_cfg = config.load_keyer()
         self.node_id = config.node_id()
         self.sync: LogSync | None = None
         self.cty_missing = not data_file("cty.dat").exists()
@@ -140,6 +144,7 @@ class MainWindow(QMainWindow):
             self.wsjtx.start(self.wsjtx_cfg)
         if self.rig_cfg.get("enabled"):
             self.rig.start(self.rig_cfg)
+        self.keyer.configure(self.keyer_cfg)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -299,6 +304,12 @@ class MainWindow(QMainWindow):
         self.rig.modeChanged.connect(self._on_rig_mode)
         self.rig.stateChanged.connect(self._on_rig_state)
 
+        # Voice + CW keyer (transmits only when Config ▸ Voice & CW keyer allows it)
+        self.keyer = Keyer(self.rig, self)
+        self.keyer.stateChanged.connect(self._on_keyer_state)
+        self.keyer.problem.connect(lambda why: self.banner(why, "#ffd166"))
+        self.keyer.recorded.connect(self._on_recorded)
+
     def _dock(self, title, widget, area, closable=True, scroll=True):
         d = Pane(title, widget, self, closable=closable, scroll=scroll)
         self.addDockWidget(area, d)
@@ -339,6 +350,7 @@ class MainWindow(QMainWindow):
         cfg.addAction(QAction("Local network…", self, triggered=self.edit_network))
         cfg.addAction(QAction("WSJT-X…", self, triggered=self.edit_wsjtx))
         cfg.addAction(QAction("Radio…", self, triggered=self.edit_radio))
+        cfg.addAction(QAction("Voice && CW keyer…", self, triggered=self.edit_keyer))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -400,10 +412,15 @@ class MainWindow(QMainWindow):
         for i in range(12):
             QShortcut(QKeySequence(f"F{i + 1}"), self, activated=lambda n=i: self.fkey(n),
                       context=Qt.ApplicationShortcut)
-        QShortcut(QKeySequence("Escape"), self, activated=self.wipe)
+        for i in range(12):
+            QShortcut(QKeySequence(f"Ctrl+Shift+F{i + 1}"), self, activated=lambda n=i: self.record_fkey(n),
+                      context=Qt.ApplicationShortcut)
+        QShortcut(QKeySequence("PgUp"), self, activated=lambda: self.change_wpm(+2), context=Qt.ApplicationShortcut)
+        QShortcut(QKeySequence("PgDown"), self, activated=lambda: self.change_wpm(-2), context=Qt.ApplicationShortcut)
+        QShortcut(QKeySequence("Escape"), self, activated=self.escape)
         # When the Entry pane is popped out it's a separate window, so it needs its
         # own Escape (enabled only then, or the two would clash).
-        esc = QShortcut(QKeySequence("Escape"), self.dock_entry, activated=self.wipe,
+        esc = QShortcut(QKeySequence("Escape"), self.dock_entry, activated=self.escape,
                         context=Qt.WidgetWithChildrenShortcut)
         esc.setEnabled(False)
         self.dock_entry.topLevelChanged.connect(esc.setEnabled)
@@ -646,8 +663,81 @@ class MainWindow(QMainWindow):
         txt = config.expand(m.get("text", ""), self.station, self.call.text().strip().upper(),
                             exch, self.engine.default_rst(self.mode) if self.engine else "59")
         wav = m.get("wav", "")
-        # Rig/voice keyer output arrives in milestone M1; for now show what would be sent.
-        self.tx_lbl.setText(f"TX F{n + 1}: {txt}" + (f"   [{wav}]" if wav and self.mode == "SSB" else ""))
+        if self.mode in VOICE_MODES:
+            path = self.wav_path(wav) if wav else None
+            if path is None or not path.exists():
+                self.tx_lbl.setText(f"F{n + 1}: {txt}")
+                self.banner(f"F{n + 1} has no recording yet: press Ctrl+Shift+F{n + 1} to record it", "#ffd166")
+                return
+            if self.keyer.send_voice(path):
+                self.tx_lbl.setText(f"TX F{n + 1}: {txt}   [{wav}]")
+        elif self.mode == "CW":
+            if self.keyer.send_cw(txt):
+                self.tx_lbl.setText(f"TX F{n + 1} ({self.keyer.wpm} wpm): {txt}")
+        else:
+            self.tx_lbl.setText(f"F{n + 1}: {txt}")
+
+    # ---------------------------------------------------------- keyer
+    def wav_path(self, name: str) -> Path:
+        from ..core.keyer import wav_dir
+        return wav_dir(config.CONFIG_DIR, self.station.call) / name
+
+    def escape(self):
+        """Esc: stop recording, else stop sending; only an idle Esc wipes the entry line."""
+        if self.keyer.recorder.active:
+            self.keyer.stop_recording()
+        elif self.keyer.stop():
+            self.tx_lbl.setText("Stopped")
+        else:
+            self.wipe()
+
+    def record_fkey(self, n: int):
+        """Ctrl+Shift+Fn: record (or stop recording) the voice message for Fn."""
+        if self.keyer.recorder.active:
+            self.keyer.stop_recording(); return
+        from ..core.keyer import safe_wav_name
+        page_name = "RUN" if self.run_mode else "SP"
+        page = self.macros.get("SSB", {}).get(page_name, [])
+        if n >= len(page):
+            return
+        m = page[n]
+        if m.get("text", "").strip() in ("{CLEAR}", "{SPOT}"):
+            self.banner(f"F{n + 1} is an action key ({m['text']}), not a message", "#ffd166"); return
+        if not m.get("wav"):
+            m["wav"] = safe_wav_name(f"{page_name.lower()}_f{n + 1}")
+            config.save_macros(self.macros)
+        if self.keyer.record(self.wav_path(m["wav"])):
+            self.banner(f"Recording F{n + 1} ({m.get('label', '')}): speak, then press Ctrl+Shift+F{n + 1} or Esc",
+                        "#ff8080")
+
+    def _on_recorded(self, path: str):
+        from ..core.keyer import wav_seconds
+        self.banner(f"Saved {Path(path).name} ({wav_seconds(Path(path)):.1f} s)")
+
+    def _on_keyer_state(self, state: str):
+        if state:
+            if not self.tx_lbl.text().startswith("TX F"):        # keep "TX F1: CQ…" while it's sent
+                self.tx_lbl.setText(state)
+        else:
+            if self.tx_lbl.text().startswith(("TX", "●", "Playing")):
+                self.tx_lbl.setText("")                         # finished sending
+        if not self.keyer.recorder.active and self.banner_lbl.text().startswith("Recording"):
+            self.banner("")
+
+    def change_wpm(self, delta: int):
+        wpm = self.keyer.set_wpm(self.keyer.wpm + delta)
+        self.keyer_cfg["wpm"] = wpm
+        config.save_keyer(self.keyer_cfg)
+        self.tx_lbl.setText(f"CW speed {wpm} wpm")
+
+    def edit_keyer(self):
+        self.keyer_cfg["wpm"] = self.keyer.wpm
+        dlg = KeyerDialog(self.keyer_cfg, self.keyer, self.macros,
+                          self.wav_path("x").parent, self)
+        if dlg.exec():
+            self.keyer_cfg = dlg.values()
+            config.save_keyer(self.keyer_cfg)
+        self.keyer.configure(self.keyer_cfg)
 
     # ---------------------------------------------------------- radio
     def set_freq(self, khz: float, from_rig: bool = False):
@@ -1390,6 +1480,7 @@ class MainWindow(QMainWindow):
         self.cluster.disconnect_from()
         self.net.stop()
         self.wsjtx.stop()
+        self.keyer.shutdown()
         self.rig.stop()
         if self.log:
             self.log.close()
