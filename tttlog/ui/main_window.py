@@ -57,8 +57,8 @@ LAYOUT_VERSION = "grid2"  # bump when panes are added/renamed so old saved layou
 
 # Where each pane starts on the grid (48 columns wide; rows are 22 px): x, y, width, height
 DEFAULT_GRID = {
-    "Bands": (0, 0, 3, 28), "Entry": (3, 0, 29, 10), "Log": (3, 10, 12, 18),
-    "Spots": (15, 10, 17, 12), "Telnet": (15, 22, 17, 6), "Score": (32, 0, 16, 9),
+    "Bands": (0, 0, 3, 28), "Entry": (3, 0, 29, 14), "Log": (3, 14, 12, 14),
+    "Spots": (15, 14, 17, 9), "Telnet": (15, 23, 17, 5), "Score": (32, 0, 16, 9),
     "Check Partial": (32, 9, 16, 5), "Rate": (32, 14, 16, 8), "Needed": (32, 22, 16, 6),
     "Network": (32, 28, 16, 6), "Needed Spots": (15, 28, 17, 8),
 }
@@ -228,6 +228,18 @@ class MainWindow(QMainWindow):
         v.addLayout(fk)
         self.tx_lbl = QLabel()
         v.addWidget(self.tx_lbl)
+        # Needed mults as they're spotted, newest first (under the F-keys, where you're looking)
+        self.alerts_lbl = QLabel()
+        self.alerts_lbl.setStyleSheet("font-weight: bold;")
+        v.addWidget(self.alerts_lbl)
+        self.alerts = QListWidget()
+        self.alerts.setFocusPolicy(Qt.NoFocus)
+        self.alerts.setMinimumHeight(40)
+        self.alerts.setMaximumHeight(92)
+        self.alerts.setStyleSheet("QListWidget { font: 10pt 'Menlo', 'Consolas', monospace; }")
+        self.alerts.itemClicked.connect(self._on_alert_clicked)
+        v.addWidget(self.alerts)
+        self._alerted: dict[tuple, object] = {}    # (call, band) -> when we said so
         # Every pane, the entry line included, is a tile on a grid (see docks.py).
         v.setContentsMargins(8, 4, 8, 4)
         v.setSpacing(4)
@@ -255,21 +267,7 @@ class MainWindow(QMainWindow):
         self.log_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.log_table.verticalHeader().setVisible(False)
         self.log_table.doubleClicked.connect(self.edit_selected)
-        log_box = QWidget()
-        lv = QVBoxLayout(log_box)
-        lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(2)
-        lv.addWidget(self.log_table, 1)
-        self.alerts_lbl = QLabel()
-        self.alerts_lbl.setStyleSheet("font-weight: bold; padding: 2px 4px;")
-        lv.addWidget(self.alerts_lbl)
-        self.alerts = QListWidget()                 # needed mults as they're spotted, newest first
-        self.alerts.setFocusPolicy(Qt.NoFocus)
-        self.alerts.setMaximumHeight(92)
-        self.alerts.setStyleSheet("QListWidget { font: 10pt 'Menlo', 'Consolas', monospace; }")
-        self.alerts.itemClicked.connect(self._on_alert_clicked)
-        lv.addWidget(self.alerts)
-        self._alerted: dict[tuple, object] = {}    # (call, band) -> when we said so
-        self._dock("Log", log_box)
+        self._dock("Log", self.log_table)
 
         # Score pane
         self.score_table = QTableWidget(0, 4)

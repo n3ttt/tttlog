@@ -84,7 +84,7 @@ The same `build_app.py` builds a macOS version on a Mac.
 
 (On a Mac, Ctrl is ⌘.) Ctrl+G, Ctrl+B and Ctrl+R can be changed in Config ▸ Keyboard shortcuts.
 
-**Needed mults spotted:** under the Log, each new multiplier that shows up on the cluster gets a line (time, call, kHz, band, and what it is, e.g. Japan or zone 25), newest first. Only spots that pass your spot filter and that you can transmit on are listed, each call and band at most once every 10 minutes. Click a line to go there. Cluster ▸ **Needed mults: only the band I'm on** limits these messages and Ctrl+G to your current band.
+**Needed mults spotted:** in the Entry pane under the F-keys, each new multiplier that shows up on the cluster gets a line (time, call, kHz, band, and what it is, e.g. Japan or zone 25), newest first. Only spots that pass your spot filter and that you can transmit on are listed, each call and band at most once every 10 minutes. Click a line to go there. Cluster ▸ **Needed mults: only the band I'm on** limits these messages and Ctrl+G to your current band.
 
 **Needed Spots** pane (starts rolled up at the bottom; + to open it): every spotted station you still need, mults first, then new Qs, newest first, with what each is needed for (e.g. *zone 25, Japan* or *new Q*). Filter by band (all, the band you're on, or one band), by Mults and Qs / Mults only / Qs only, and, in contests with more than one kind of mult, by the kind (Countries, Zones...). Double-click a row to go there.
 

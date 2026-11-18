@@ -222,9 +222,9 @@ def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
     _pump(app, lambda: False, 800)
     e = w.dock_entry
     assert not e.bar.close_btn.isVisible() or not e.closable
-    assert e.height() < 300, e.height()                    # just the entry, no blank space
+    assert e.height() < 400, e.height()                    # the entry and the needed-mult messages
     assert w.dock_log.geometry().top() >= e.geometry().bottom()
-    assert w.dock_log.height() > 400                       # the room below goes to the panes
+    assert w.dock_log.height() > 300                       # the room below goes to the panes
     assert w.call.height() >= w.call.sizeHint().height()   # entry fields not squashed
 
     # Typing must not resize panes (an old Windows bug squeezed Log and Spots on
