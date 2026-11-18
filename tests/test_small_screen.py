@@ -31,7 +31,7 @@ def win(app, tmp_path, monkeypatch):
 
 def test_window_can_shrink_to_small_screen(win):
     win.show()
-    win._default_tabs(); win._default_sizes()
+    win.reset_layout()
     m = win.minimumSizeHint()
     assert m.width() <= 640 and m.height() <= 400, m
     win.resize(800, 480)

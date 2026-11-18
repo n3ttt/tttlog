@@ -86,19 +86,17 @@ The same `build_app.py` builds a macOS version on a Mac.
 The banner under the entry line goes red for a **DUPE**, green for a **NEW MULT**, and yellow for **not valid / bad exchange**.
 ## Windows (panes)
 
-Log, Score, Check Partial, Rate, Needed, Spots, and Telnet are panes. Each title bar has three buttons:
+Every part of the window (Bands, Entry, Log, Spots, Telnet, Score, Check Partial, Rate, Needed, Network) is a pane on a grid, like a web dashboard. The columns stretch with the window; rows are a fixed height.
 
-- **–** minimizes the pane: it rolls up to just its title bar. Click **+** to bring it back.
-- **⧉** pops the pane out into its own window, which has the normal minimize, zoom, and close buttons. **⇲** (or double-clicking the title bar) docks it back where it was. To dock it somewhere else, drag it by tttlog's title strip (the bar with ⇲, not the system title bar) and drop it on the main window: near a pane's edge to go beside or above/below it, in its middle to stack as a tab, or on the empty space to go at that column's edge. A shaded box shows where it will land; dropped off the window, it stays popped out.
-- **×** closes it. Reopen it from the View menu.
+- **Move:** drag a pane by its title bar. It follows the mouse, a dashed box shows where it will snap, and any pane it would overlap slides down out of the way as you go. Drag it back and they slide back. Nothing else ever moves.
+- **Resize:** drag the grip in the bottom-right corner. It snaps to the grid and pushes panes the same way.
+- **–** rolls the pane up to its title bar (nothing else moves); **+** unrolls it.
+- **⧉** pops it out into its own window, with the normal minimize, zoom, and close buttons. **⇲** (or double-clicking the title bar) puts it back exactly where it was, bumping anything now in that spot. Or drag it by tttlog's title strip (the bar with ⇲, not the system title bar) and drop it on the grid where you want it; dropped off the window, it stays popped out.
+- **×** closes it. Reopen it from the View menu; it comes back where it was.
 
-View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once. You can also drag panes to rearrange them or stack them as tabs. The layout is remembered.
+If panes go below the bottom of the window, it scrolls. View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once.
 
-Panes don't have to fill the window. Drag the inner edge of the left or right column (Log, Spots, Rate, Needed...) to make it smaller, and the window keeps an empty area in the middle. Drag the edge back to close the gap. To go back to panes always filling the window, untick View ▸ Leave empty space.
-
-Minimizing a pane (–) only lets the pane under or over it grow into the space; nothing else moves or changes width, and restoring it (+) puts every pane back where it was.
-
-**Layouts are kept, per operator.** The layout (where each pane is, its size, which are minimized or popped out) is saved when tttlog closes and comes back next time. Each operator has their own: **OPON** saves the outgoing operator's layout and switches to the incoming operator's (the first time someone logs on, they start from the current layout). View ▸ **Save layout for <op>** saves it right away; View ▸ **Reset to the default layout** goes back to tttlog's arrangement. Layouts are kept on each computer.
+**Layouts are kept, per operator.** Where every pane is (in grid cells), which are rolled up, closed, or popped out is saved when tttlog closes and comes back next time, the same on Mac, Windows and Linux. Each operator has their own: **OPON** saves the outgoing operator's layout and switches to the incoming operator's (the first time someone logs on, they start from the current layout). View ▸ **Save layout for <op>** saves it right away; View ▸ **Reset to the default layout** goes back to tttlog's arrangement. Layouts are kept on each computer.
 
 ## Rate pane
 

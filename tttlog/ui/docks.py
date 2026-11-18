@@ -1,47 +1,85 @@
-"""Panes that can be minimized, popped out, and closed.
+"""Panes on a grid (like a web dashboard).
 
-Docked: the title bar has  _  (minimize: roll up to just the title bar),
-⧉ (pop out into its own window) and × (close; bring back from View).
-Popped out: the pane becomes a normal window with the system's own
-minimize / zoom / close buttons, so it can go to the Dock/taskbar like any
-other window. The ⇲ button (or double-clicking the title bar) docks it again.
+The main window is a grid: columns scale with the window's width, rows are a
+fixed height. Each pane is a tile on it:
+
+* drag its title bar to move it; it snaps to the grid, and any pane it would
+  overlap slides down out of the way while you drag (nothing else moves);
+* drag the corner grip to resize it, with the same pushing;
+* –  rolls it up to its title bar (nothing else moves); +  unrolls it;
+* ⧉  pops it out into its own window (system minimize / zoom / close); ⇲ (or
+  double-clicking the title) puts it back exactly where it was on the grid,
+  bumping anything now in the way; or drag it by this title strip and drop it
+  on the grid where you want it;
+* ×  closes it (View menu brings it back where it was).
+
+Positions are in grid cells, so a saved layout comes back the same on every
+platform and screen size.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QRect, QSize, Qt, QTimer
-from PySide6.QtWidgets import (QDockWidget, QFrame, QHBoxLayout, QLabel, QMainWindow, QScrollArea,
-                               QRubberBand, QSizePolicy, QToolButton, QWidget)
-
-QWIDGETSIZE_MAX = (1 << 24) - 1
-
-
-def _docked(mw) -> list:
-    """Panes docked in the main window (not popped out), one per tab group: a tab
-    hidden behind another reports a stale size, and resizing it would resize the
-    whole group."""
-    out = []
-    for d in mw.findChildren(QDockWidget):
-        if not d.isVisible() or d.isFloating():
-            continue
-        if mw.tabifiedDockWidgets(d) and d.visibleRegion().isEmpty():
-            continue                                  # a tab that isn't the one showing
-        out.append(d)
-    return out
+from PySide6.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRect, QSize, Qt, QTimer,
+                            Signal)
+from PySide6.QtGui import QAction, QColor, QPainter
+from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy, QToolButton,
+                               QVBoxLayout, QWidget)
 
 FLOAT_FLAGS = (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint |
                Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
                Qt.WindowCloseButtonHint)
 
+COLS = 24            # grid columns across the window (their width follows the window)
+ROW_H = 22           # px per grid row
+GAP = 4              # px between tiles
+MIN_W, MIN_H = 2, 2  # smallest tile, in cells
+ANIM_MS = 120
 
+# Smallest a pane's contents may be squeezed to. Below what they need, they
+# scroll instead of forcing the whole window to be bigger than a small screen.
+PANE_MIN = QSize(60, 30)
+
+
+def _shrinkable(widget: QWidget) -> QScrollArea:
+    sc = QScrollArea()
+    sc.setWidget(widget)
+    sc.setWidgetResizable(True)
+    sc.setFrameShape(QFrame.NoFrame)
+    sc.setMinimumSize(PANE_MIN)
+    return sc
+
+
+def overlaps(a: QRect, b: QRect) -> bool:
+    return a.x() < b.x() + b.width() and b.x() < a.x() + a.width() and \
+        a.y() < b.y() + b.height() and b.y() < a.y() + a.height()
+
+
+def push_down(rects: dict, moved: str) -> dict:
+    """rects: name -> QRect in cells. Move every rect that overlaps `moved` (and,
+    in turn, anything those overlap) straight down just far enough. `moved` stays."""
+    out = {n: QRect(r) for n, r in rects.items()}
+    queue = [moved]
+    while queue:
+        a = queue.pop(0)
+        for n, r in out.items():
+            if n in (a, moved) or not overlaps(out[a], r):
+                continue
+            r.moveTop(out[a].y() + out[a].height())
+            queue.append(n)
+    return out
+
+
+# ------------------------------------------------------------------ title bar
 class PaneTitleBar(QWidget):
     def __init__(self, dock: "Pane"):
         super().__init__(dock)
         self.dock = dock
+        self.setFixedHeight(ROW_H - 2)
+        self.setCursor(Qt.OpenHandCursor)
         h = QHBoxLayout(self)
-        h.setContentsMargins(6, 1, 2, 1)
+        h.setContentsMargins(6, 0, 2, 0)
         h.setSpacing(2)
         self.title = QLabel(dock.windowTitle())
-        self.title.setMinimumWidth(0)                # a narrow pane clips its title, not the other panes
+        self.title.setMinimumWidth(0)                # a narrow pane clips its title
         self.title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         f = self.title.font(); f.setBold(True); self.title.setFont(f)
         h.addWidget(self.title, 1)
@@ -51,240 +89,470 @@ class PaneTitleBar(QWidget):
         for b in (self.min_btn, self.float_btn, self.close_btn):
             h.addWidget(b)
         self.close_btn.setVisible(dock.closable)
+        self._press = None
 
     def _btn(self, text, tip, slot):
         b = QToolButton(self)
         b.setText(text); b.setToolTip(tip); b.setAutoRaise(True)
         b.setFocusPolicy(Qt.NoFocus)
         b.setFixedSize(QSize(20, 18))
+        b.setCursor(Qt.ArrowCursor)
         b.clicked.connect(slot)
         return b
 
     def sync(self):
         floating = self.dock.isFloating()
         self.float_btn.setText("⇲" if floating else "⧉")
-        self.float_btn.setToolTip("Dock back into the main window" if floating
+        self.float_btn.setToolTip("Put it back where it was on the grid" if floating
                                   else "Pop out into its own window")
-        # popped-out panes use the system minimize button instead
-        self.min_btn.setVisible(not floating)
-        self.setToolTip("Drag here and drop on the main window to dock it there "
-                        "(beside a pane, on top of one as a tab, or at a column edge)" if floating else "")
+        self.min_btn.setVisible(not floating)        # popped out: the system minimize button
         self.min_btn.setText("+" if self.dock.minimized else "–")
         self.min_btn.setToolTip("Restore" if self.dock.minimized else "Minimize (roll up to the title bar)")
+        self.setToolTip("Drag here and drop on the main window to put it on the grid there"
+                        if floating else "Drag to move · corner grip to resize")
 
     def mouseDoubleClickEvent(self, ev):
         self.dock.toggle_floating()
 
-    # -- popped out: drag by this strip, drop on the main window to dock there ------
     def mousePressEvent(self, ev):
-        if self.dock.isFloating() and ev.button() == Qt.LeftButton:
-            self._drag_from = ev.globalPosition().toPoint() - self.dock.frameGeometry().topLeft()
-            ev.accept(); return
-        super().mousePressEvent(ev)
+        if ev.button() != Qt.LeftButton:
+            return super().mousePressEvent(ev)
+        g = ev.globalPosition().toPoint()
+        if self.dock.isFloating():
+            self._press = ("float", g - self.dock.frameGeometry().topLeft())
+        elif self.dock.canvas is not None:
+            self._press = ("move", g)
+            self.dock.canvas.begin_move(self.dock, g)
+        self.setCursor(Qt.ClosedHandCursor)
+        ev.accept()
 
     def mouseMoveEvent(self, ev):
-        if self.dock.isFloating() and getattr(self, "_drag_from", None) is not None:
-            p = ev.globalPosition().toPoint()
-            self.dock.move(p - self._drag_from)
-            self.dock.show_drop_preview(p)
-            ev.accept(); return
-        super().mouseMoveEvent(ev)
+        if not self._press:
+            return super().mouseMoveEvent(ev)
+        g = ev.globalPosition().toPoint()
+        kind, start = self._press
+        if kind == "float":
+            self.dock.move(g - start)
+            if self.dock.canvas is not None:
+                self.dock.canvas.preview_drop(self.dock, g)
+        elif self.dock.canvas is not None:
+            self.dock.canvas.drag_move(g)
+        ev.accept()
 
     def mouseReleaseEvent(self, ev):
-        if self.dock.isFloating() and getattr(self, "_drag_from", None) is not None:
-            self._drag_from = None
-            self.dock.drop_at(ev.globalPosition().toPoint())
-            ev.accept(); return
-        super().mouseReleaseEvent(ev)
+        if not self._press:
+            return super().mouseReleaseEvent(ev)
+        kind, _ = self._press
+        self._press = None
+        self.setCursor(Qt.OpenHandCursor)
+        g = ev.globalPosition().toPoint()
+        if kind == "float" and self.dock.canvas is not None:
+            self.dock.canvas.drop_floating(self.dock, g)
+        elif self.dock.canvas is not None:
+            self.dock.canvas.end_drag()
+        ev.accept()
 
 
-# Smallest a pane may be squeezed to. Below what its contents need, it
-# scrolls instead of forcing the whole window to be bigger than a small screen.
-PANE_MIN = QSize(120, 48)
+class ResizeGrip(QWidget):
+    """Bottom-right corner: drag to resize the tile on the grid."""
+
+    def __init__(self, dock: "Pane"):
+        super().__init__(dock)
+        self.dock = dock
+        self.setFixedSize(12, 12)
+        self.setCursor(Qt.SizeFDiagCursor)
+        self.setToolTip("Drag to resize")
+        self._on = False
+
+    def paintEvent(self, _ev):
+        p = QPainter(self)
+        p.setPen(QColor(128, 128, 128))
+        for i in (3, 6, 9):
+            p.drawLine(11, i, i, 11)
+
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton and self.dock.canvas is not None and not self.dock.isFloating():
+            self._on = True
+            self.dock.canvas.begin_resize(self.dock, ev.globalPosition().toPoint())
+            ev.accept()
+
+    def mouseMoveEvent(self, ev):
+        if self._on:
+            self.dock.canvas.drag_resize(ev.globalPosition().toPoint())
+            ev.accept()
+
+    def mouseReleaseEvent(self, ev):
+        if self._on:
+            self._on = False
+            self.dock.canvas.end_drag()
+            ev.accept()
 
 
-def _shrinkable(widget: QWidget) -> QScrollArea:
-    sc = QScrollArea()
-    sc.setWidget(widget)
-    sc.setWidgetResizable(True)
-    sc.setFrameShape(QFrame.NoFrame)
-    sc.setMinimumSize(PANE_MIN)
-    sc.setSizePolicy(widget.sizePolicy())
-    return sc
+# ------------------------------------------------------------------ a pane
+class Pane(QFrame):
+    """One tile. `grid` is its place in cells (x, y, width, height)."""
+    topLevelChanged = Signal(bool)          # popped out / put back
+    visibilityChanged = Signal(bool)
 
-
-class Pane(QDockWidget):
     def __init__(self, title: str, widget: QWidget, parent=None, closable: bool = True,
                  scroll: bool = True):
-        super().__init__(title, parent, objectName=f"dock_{title}")
+        super().__init__(parent)
+        self.setObjectName(f"dock_{title}")
+        self.setWindowTitle(title)
+        self.setFrameShape(QFrame.StyledPanel)
         self.content = widget
-        self.setWidget(_shrinkable(widget) if scroll else widget)
         self.closable = closable
-        if not closable:
-            self.setFeatures(self.features() & ~QDockWidget.DockWidgetClosable)
         self.minimized = False
-        self.bar = PaneTitleBar(self)  # needs self.closable
-        self.setTitleBarWidget(self.bar)
-        self.topLevelChanged.connect(self._on_top_level)
+        self.floating = False
+        self.shown = True
+        self.canvas: GridCanvas | None = None
+        self.grid = QRect(0, 0, 6, 6)
+        self._float_geo: QRect | None = None
+        v = QVBoxLayout(self)
+        v.setContentsMargins(1, 1, 1, 1)
+        v.setSpacing(0)
+        self.bar = PaneTitleBar(self)
+        v.addWidget(self.bar)
+        self.body = _shrinkable(widget) if scroll else widget
+        v.addWidget(self.body, 1)
+        self.grip = ResizeGrip(self)
+        self._view_action = QAction(title, self, checkable=True, checked=True)
+        self._view_action.toggled.connect(self._on_view_toggled)
         self.bar.sync()
 
-    # -- minimize (docked) -------------------------------------------------
+    # QDockWidget-style API the main window uses
+    def widget(self) -> QWidget:
+        return self.body
+
+    def isFloating(self) -> bool:
+        return self.floating
+
+    def toggleViewAction(self) -> QAction:
+        return self._view_action
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.grip.move(self.width() - self.grip.width() - 1, self.height() - self.grip.height() - 1)
+        self.grip.raise_()
+
+    # -- show / close ------------------------------------------------------------
+    def _on_view_toggled(self, on: bool):
+        if on != self.shown:
+            self.set_shown(on)
+
+    def set_shown(self, on: bool):
+        self.shown = on
+        self._view_action.blockSignals(True)
+        self._view_action.setChecked(on)
+        self._view_action.blockSignals(False)
+        if on:
+            if self.floating:
+                self.show()
+            elif self.canvas is not None:
+                self.canvas.place(self, self.grid)        # back where it was, bumping others
+        else:
+            self.hide()
+            if self.canvas is not None:
+                self.canvas.relayout()
+        self.visibilityChanged.emit(on)
+
+    def close(self):
+        if self.floating:
+            self.setFloating(False)                     # closed while popped out: goes home hidden
+        self.set_shown(False)
+        return True
+
+    def closeEvent(self, ev):
+        if self.floating:                               # the window's own close button
+            ev.ignore()
+            self.close()
+            return
+        super().closeEvent(ev)
+
+    # -- minimize ------------------------------------------------------------------
     def toggle_minimized(self):
         self.set_minimized(not self.minimized)
 
-    def set_minimized(self, on: bool, restore_heights: dict | None = None):
-        """restore_heights: {pane objectName: height} to give back on restore (a saved
-        layout's), instead of the heights at the moment of minimizing."""
-        if self.isFloating():
+    def set_minimized(self, on: bool):
+        if self.floating:
             if on:
                 self.showMinimized()
             return
         if on == self.minimized:
             return
-        mw = self.parentWidget() if isinstance(self.parentWidget(), QMainWindow) else None
-        # Rolling up must not move the other panes: keep every column's width
-        # (only this pane's height goes to its neighbour), and give it back its
-        # own height when it's restored.
-        widths = {d: d.width() for d in _docked(mw)} if mw else {}
-        if on:
-            # heights of everything as it was, to put back on restore
-            self._heights_before_min = {d: d.height() for d in _docked(mw)} if mw else {}
-            if restore_heights and mw:
-                by_name = {d.objectName(): d for d in _docked(mw)}
-                self._heights_before_min = {by_name[n]: h for n, h in restore_heights.items() if n in by_name}
-            self.setFixedWidth(self.width())          # its column keeps its width
         self.minimized = on
-        self.widget().setVisible(not on)
-        if not on:
-            self.setMinimumWidth(0); self.setMaximumWidth(QWIDGETSIZE_MAX)
+        self.body.setVisible(not on)
+        self.grip.setVisible(not on)
         self.bar.sync()
-        if mw:
-            self._settle_gen = getattr(self, "_settle_gen", 0) + 1
-            gen = self._settle_gen
-            QTimer.singleShot(0, lambda: self._settle(mw, widths, on, gen))
-
-    def restore_heights(self) -> dict:
-        """What restoring this (minimized) pane would give back, by pane name (saved with layouts)."""
-        return {d.objectName(): h for d, h in getattr(self, "_heights_before_min", {}).items()}
-
-    def unroll_now(self):
-        """Un-minimize without resizing anything (a whole layout is about to be restored)."""
-        if self.minimized:
-            self.minimized = False
-            self.widget().setVisible(True)
-            self.setMinimumWidth(0); self.setMaximumWidth(QWIDGETSIZE_MAX)
-            self._settle_gen = getattr(self, "_settle_gen", 0) + 1     # drop a pending re-layout
-            self.bar.sync()
-
-    def _settle(self, mw, widths: dict, minimized: bool, gen: int | None = None):
-        if gen is not None and gen != getattr(self, "_settle_gen", 0):
-            return
-        alive = [d for d in widths if d in _docked(mw)]
-        if alive:
-            mw.resizeDocks(alive, [widths[d] for d in alive], Qt.Horizontal)
-        heights = getattr(self, "_heights_before_min", {})
-        if not minimized and heights and not self.isFloating():
-            mine = self.geometry()
-            back = [d for d in heights if d in _docked(mw) and not getattr(d, "minimized", False)
-                    and d.geometry().left() < mine.right() and mine.left() < d.geometry().right()]  # my column
-            mw.resizeDocks(back, [heights[d] for d in back], Qt.Vertical)
-
-    # -- drop a popped-out pane onto the main window ------------------------------
-    def _main(self):
-        p = self.parentWidget()
-        return p if isinstance(p, QMainWindow) else None
-
-    def drop_target(self, gpos):
-        """Where dropping at gpos (global) would dock: (kind, other pane or area, rect in
-        main-window coordinates) or None. kind: left/right/top/bottom (beside a pane),
-        tab (on top of a pane, as a tab), area (a column edge in the empty space)."""
-        mw = self._main()
-        if mw is None:
-            return None
-        pos = mw.mapFromGlobal(gpos)
-        if not mw.rect().contains(pos):
-            return None
-        for d in _docked(mw):
-            if d is self:
-                continue
-            g = d.geometry()
-            if not g.contains(pos):
-                continue
-            fx = (pos.x() - g.left()) / max(1, g.width())
-            fy = (pos.y() - g.top()) / max(1, g.height())
-            edge = min((fx, "left"), (1 - fx, "right"), (fy, "top"), (1 - fy, "bottom"))
-            if edge[0] > 0.25:                              # the middle: stack as a tab
-                return "tab", d, g
-            r = QRect(g)
-            if edge[1] == "left":
-                r.setWidth(g.width() // 2)
-            elif edge[1] == "right":
-                r.setLeft(g.left() + g.width() // 2)
-            elif edge[1] == "top":
-                r.setHeight(g.height() // 2)
+        if self.canvas is not None:
+            if on:
+                self.canvas.relayout()                  # rolls up; nothing else moves
             else:
-                r.setTop(g.top() + g.height() // 2)
-            return edge[1], d, r
-        # not over a pane: the empty space -> the nearer side's column
-        left = pos.x() < mw.width() // 2
-        area = Qt.LeftDockWidgetArea if left else Qt.RightDockWidgetArea
-        r = QRect(0, 0, 120, mw.height()) if left else QRect(mw.width() - 120, 0, 120, mw.height())
-        return "area", area, r
+                self.canvas.place(self, self.grid)      # unrolls, bumping anything now below
 
-    def show_drop_preview(self, gpos):
-        mw = self._main()
-        if mw is None:
+    # -- pop out / put back --------------------------------------------------------
+    def toggle_floating(self):
+        self.setFloating(not self.floating)
+
+    def setFloating(self, on: bool):
+        if on == self.floating or self.canvas is None:
             return
-        if getattr(self, "_band", None) is None:
-            self._band = QRubberBand(QRubberBand.Rectangle, mw)
-        t = self.drop_target(gpos)
-        if t is None:
-            self._band.hide()
+        if on:
+            if self.minimized:
+                self.set_minimized(False)
+            geo = self._float_geo or QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+            self.floating = True
+            self.setParent(None)
+            self.setWindowFlags(FLOAT_FLAGS if self.closable else FLOAT_FLAGS & ~Qt.WindowCloseButtonHint)
+            self.setGeometry(geo)
+            self.grip.hide()
+            self.show()
+            self.canvas.relayout()
         else:
-            self._band.setGeometry(t[2]); self._band.show(); self._band.raise_()
+            self._float_geo = self.geometry()
+            self.floating = False
+            self.setParent(self.canvas)
+            self.setWindowFlags(Qt.Widget)
+            self.grip.setVisible(not self.minimized)
+            if self.shown:
+                self.show()
+                self.canvas.place(self, self.grid)
+        self.bar.sync()
+        self.topLevelChanged.emit(on)
 
-    def drop_at(self, gpos) -> bool:
-        """Dock where it was dropped (False: not over the main window, stay popped out)."""
-        if getattr(self, "_band", None) is not None:
-            self._band.hide()
-        mw = self._main()
-        t = self.drop_target(gpos)
-        if mw is None or t is None:
-            return False
-        kind, other, _r = t
-        # Dock straight into the target's column: setFloating(False) would first put it
-        # back in its old spot (e.g. its old tab group), and Qt won't always move it on.
-        mw.addDockWidget(other if kind == "area" else mw.dockWidgetArea(other), self)
-        if self.isFloating():
-            self.setFloating(False)
-        if kind == "tab":
-            mw.tabifyDockWidget(other, self)
-            self.raise_()
-        elif kind == "area":
-            pass                                          # already at that column's edge
+    def _on_top_level(self, floating: bool):            # kept for the main window's startup code
+        self.bar.sync()
+
+
+# ------------------------------------------------------------------ the grid
+class GridCanvas(QWidget):
+    """Holds the tiles; columns follow the width, rows are ROW_H px."""
+    layoutChanged = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.panes: dict[str, Pane] = {}
+        self._drag = None
+        self._anims: list[QPropertyAnimation] = []
+        self.ghost = QFrame(self)
+        self.ghost.setStyleSheet("background: rgba(60, 130, 230, 50); border: 2px dashed rgb(60, 130, 230);"
+                                 " border-radius: 4px;")
+        self.ghost.hide()
+        self.setMinimumSize(200, 100)
+
+    # -- cells <-> pixels ----------------------------------------------------------
+    def col_w(self) -> float:
+        return max(4.0, (self.width() - GAP * (COLS + 1)) / COLS)
+
+    def to_px(self, r: QRect) -> QRect:
+        cw = self.col_w()
+        x = round(GAP + r.x() * (cw + GAP))
+        w = round(r.width() * cw + (r.width() - 1) * GAP)
+        y = GAP + r.y() * (ROW_H + GAP)
+        h = r.height() * ROW_H + (r.height() - 1) * GAP
+        return QRect(x, y, w, h)
+
+    def to_cell(self, p: QPoint) -> QPoint:
+        cw = self.col_w()
+        return QPoint(round((p.x() - GAP) / (cw + GAP)), round((p.y() - GAP) / (ROW_H + GAP)))
+
+    # -- tiles ---------------------------------------------------------------------
+    def add(self, pane: Pane, rect: QRect):
+        pane.canvas = self
+        pane.setParent(self)
+        pane.grid = QRect(rect)
+        self.panes[pane.objectName()] = pane
+        pane.show()
+
+    def on_grid(self) -> list[Pane]:
+        return [p for p in self.panes.values() if p.shown and not p.floating]
+
+    @staticmethod
+    def occupied(p: Pane, r: QRect | None = None) -> QRect:
+        r = QRect(r if r is not None else p.grid)
+        if p.minimized:
+            r.setHeight(1)
+        return r
+
+    def place(self, pane: Pane, rect: QRect):
+        """Put a pane at rect, pushing anything it overlaps down; others don't move otherwise."""
+        rect = self._clamp(rect)
+        tiles = {p.objectName(): self.occupied(p) for p in self.on_grid()}
+        tiles[pane.objectName()] = self.occupied(pane, rect)
+        new = push_down(tiles, pane.objectName())
+        for p in self.on_grid():
+            if p is pane:
+                p.grid = rect
+            else:
+                p.grid.moveTop(new[p.objectName()].y())
+        self.relayout(animate=True)
+        self.layoutChanged.emit()
+
+    def _clamp(self, r: QRect) -> QRect:
+        w = max(MIN_W, min(COLS, r.width()))
+        h = max(MIN_H, r.height())
+        return QRect(max(0, min(COLS - w, r.x())), max(0, r.y()), w, h)
+
+    def relayout(self, animate: bool = False, skip: Pane | None = None):
+        for a in self._anims:
+            a.stop()
+        self._anims = []
+        bottom = 0
+        for p in self.on_grid():
+            target = self.to_px(self.occupied(p))
+            bottom = max(bottom, target.bottom())
+            if p is skip:
+                continue
+            if animate and p.isVisible() and p.geometry() != target:
+                a = QPropertyAnimation(p, b"geometry", self)
+                a.setDuration(ANIM_MS)
+                a.setEasingCurve(QEasingCurve.OutCubic)
+                a.setEndValue(target)
+                a.start()
+                self._anims.append(a)
+            else:
+                p.setGeometry(target)
+            p.show()
+        self.setMinimumHeight(bottom + GAP + ROW_H)       # scrolls when tiles go below the window
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.relayout()
+
+    def finish_animations(self):
+        for a in self._anims:
+            a.setCurrentTime(a.duration())
+        self._anims = []
+
+    # -- dragging (move / resize), live pushing --------------------------------------
+    def begin_move(self, pane: Pane, gpos: QPoint):
+        self.finish_animations()
+        self._drag = {"pane": pane, "kind": "move", "start": gpos, "geo": QRect(pane.geometry()),
+                      "base": {p.objectName(): QRect(p.grid) for p in self.on_grid()},
+                      "target": QRect(pane.grid)}
+        pane.raise_()
+
+    def begin_resize(self, pane: Pane, gpos: QPoint):
+        self.finish_animations()
+        self._drag = {"pane": pane, "kind": "resize", "start": gpos, "geo": QRect(pane.geometry()),
+                      "base": {p.objectName(): QRect(p.grid) for p in self.on_grid()},
+                      "target": QRect(pane.grid)}
+        pane.raise_()
+
+    def drag_move(self, gpos: QPoint):
+        d = self._drag
+        if not d:
+            return
+        pane, delta = d["pane"], gpos - d["start"]
+        geo = QRect(d["geo"])
+        geo.translate(delta)
+        pane.move(geo.topLeft())                          # follows the mouse exactly
+        c = self.to_cell(geo.topLeft())
+        target = self._clamp(QRect(c.x(), c.y(), pane.grid.width(), pane.grid.height()))
+        self._preview(pane, target)
+
+    def drag_resize(self, gpos: QPoint):
+        d = self._drag
+        if not d:
+            return
+        pane, delta = d["pane"], gpos - d["start"]
+        geo = QRect(d["geo"])
+        geo.setWidth(max(40, geo.width() + delta.x()))
+        geo.setHeight(max(ROW_H * MIN_H, geo.height() + delta.y()))
+        pane.resize(geo.size())
+        cw = self.col_w()
+        w = round((geo.width() + GAP) / (cw + GAP))
+        h = round((geo.height() + GAP) / (ROW_H + GAP))
+        target = self._clamp(QRect(pane.grid.x(), pane.grid.y(), w, h))
+        self._preview(pane, target)
+
+    def _preview(self, pane: Pane, target: QRect):
+        d = self._drag
+        self.ghost.setGeometry(self.to_px(target))
+        self.ghost.show()
+        self.ghost.stackUnder(pane)
+        if target == d["target"] and d.get("pushed"):
+            return
+        d["target"] = target
+        base = {n: QRect(r) for n, r in d["base"].items()}
+        tiles = {n: self.occupied(self.panes[n], r) for n, r in base.items()}
+        tiles[pane.objectName()] = self.occupied(pane, target)
+        new = push_down(tiles, pane.objectName())
+        for p in self.on_grid():                          # others slide out of the way (from where they were)
+            if p is not pane:
+                p.grid = QRect(base[p.objectName()])
+                p.grid.moveTop(new[p.objectName()].y())
+        d["pushed"] = True
+        self.relayout(animate=True, skip=pane)
+
+    def end_drag(self):
+        d, self._drag = self._drag, None
+        self.ghost.hide()
+        if not d:
+            return
+        d["pane"].grid = QRect(d["target"])
+        self.relayout(animate=True)
+        self.layoutChanged.emit()
+
+    # -- a popped-out pane dropped back on the grid -----------------------------------
+    def _drop_cell(self, pane: Pane, gpos: QPoint) -> QRect | None:
+        pos = self.mapFromGlobal(gpos)
+        if not self.rect().contains(pos):
+            return None
+        c = self.to_cell(pos - QPoint(int(self.col_w()), ROW_H // 2))   # cursor is on its title, near the left
+        return self._clamp(QRect(c.x(), c.y(), pane.grid.width(), pane.grid.height()))
+
+    def preview_drop(self, pane: Pane, gpos: QPoint):
+        r = self._drop_cell(pane, gpos)
+        if r is None:
+            self.ghost.hide()
         else:
-            orient = Qt.Horizontal if kind in ("left", "right") else Qt.Vertical
-            mw.splitDockWidget(other, self, orient)       # self after other (right / below)
-            if kind in ("left", "top"):
-                mw.splitDockWidget(self, other, orient)   # ...then other after self
+            self.ghost.setGeometry(self.to_px(r)); self.ghost.show(); self.ghost.raise_()
+
+    def drop_floating(self, pane: Pane, gpos: QPoint) -> bool:
+        self.ghost.hide()
+        r = self._drop_cell(pane, gpos)
+        if r is None:
+            return False                                  # dropped off the window: stays popped out
+        pane.grid = r
+        pane.setFloating(False)
         return True
 
-    # -- pop out / dock back ---------------------------------------------------
-    def toggle_floating(self):
-        if self.minimized:
-            self.set_minimized(False)
-        self.setFloating(not self.isFloating())
+    # -- saving ----------------------------------------------------------------------
+    def to_dict(self) -> dict:
+        out = {}
+        for name, p in self.panes.items():
+            g = p.grid
+            item = {"r": [g.x(), g.y(), g.width(), g.height()], "min": p.minimized, "shown": p.shown}
+            fg = p.geometry() if p.floating else p._float_geo
+            if p.floating:
+                item["float"] = [fg.x(), fg.y(), fg.width(), fg.height()]
+            out[name] = item
+        return out
 
-    def _on_top_level(self, floating: bool):
-        if floating:
-            # A real window: system minimize/zoom/close, shows in the Dock/taskbar.
-            geo = self.geometry()
-            self.setWindowFlags(FLOAT_FLAGS if self.closable
-                                else FLOAT_FLAGS & ~Qt.WindowCloseButtonHint)
-            self.setGeometry(geo)
-            self.show()
-        if self.minimized:
-            self.minimized = False
-            self.widget().setVisible(True)
-            self.setMinimumWidth(0); self.setMaximumWidth(QWIDGETSIZE_MAX)
-        self.bar.sync()
+    def from_dict(self, data: dict):
+        for name, p in self.panes.items():
+            item = data.get(name)
+            if not item:
+                continue
+            if p.floating:
+                p.setFloating(False)
+            if p.minimized:
+                p.minimized = False
+                p.body.setVisible(True); p.grip.setVisible(True); p.bar.sync()
+            x, y, w, h = item.get("r", [0, 0, 6, 6])
+            p.grid = self._clamp(QRect(x, y, w, h))
+            p.shown = bool(item.get("shown", True))
+            p._view_action.blockSignals(True); p._view_action.setChecked(p.shown)
+            p._view_action.blockSignals(False)
+            p.setVisible(p.shown)
+            if item.get("min"):
+                p.minimized = True
+                p.body.setVisible(False); p.grip.setVisible(False); p.bar.sync()
+        for name, p in self.panes.items():
+            item = data.get(name) or {}
+            if item.get("float") and p.shown:
+                fx, fy, fw, fh = item["float"]
+                p._float_geo = QRect(fx, fy, fw, fh)
+                p.setFloating(True)
+        self.relayout()

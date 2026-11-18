@@ -219,18 +219,16 @@ def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
     w = MainWindow()
     w.settings.clear()
     w.resize(1400, 1000); w.show()
-    _pump(app, lambda: False, 1500)       # let the default tabs and sizes (deferred timers) apply; slow CI Macs need longer
-    gap = w.centralWidget()                    # View ▸ Leave empty space (on by default)
-    assert gap is not None and gap.width() < 40, gap.width()   # starts closed: panes fill the window
+    _pump(app, lambda: False, 800)
     e = w.dock_entry
     assert not e.bar.close_btn.isVisible() or not e.closable
-    assert e.height() < 260, e.height()                    # just the entry, no blank space
+    assert e.height() < 300, e.height()                    # just the entry, no blank space
     assert w.dock_log.geometry().top() >= e.geometry().bottom()
-    assert w.dock_log.height() > 600                       # the space went to the panes
+    assert w.dock_log.height() > 400                       # the room below goes to the panes
     assert w.call.height() >= w.call.sizeHint().height()   # entry fields not squashed
 
-    # Typing must not resize panes (Windows alpha bug: the right column grew by a
-    # splitter width on every keystroke, squeezing Log and Spots).
+    # Typing must not resize panes (an old Windows bug squeezed Log and Spots on
+    # every keystroke). On the grid nothing moves unless you move it.
     w.scp = [f"DL{i}A" for i in range(500)]
     names = ("entry", "log", "spots", "score", "check_partial", "rate")
     before = {n: getattr(w, "dock_" + n).geometry() for n in names}
@@ -241,12 +239,6 @@ def test_entry_pane_is_compact(app, tmp_path, monkeypatch):
     after = {n: getattr(w, "dock_" + n).geometry() for n in names}
     assert after == before, {n: (before[n].getRect(), after[n].getRect()) for n in names if before[n] != after[n]}
     assert w.dock_log.width() > 200 and w.dock_spots.width() > 300
-    assert w.centralWidget().width() == gap.width()
-
-    w.set_free_layout(False)                   # off: no empty area, panes fill the window
-    assert w.centralWidget() is None and w.settings.value("free_layout") in (False, "false")
-    w.set_free_layout(True)
-    assert w.centralWidget() is not None
     w.close()
 
 

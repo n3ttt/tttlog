@@ -8,11 +8,11 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QRect, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QGridLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
+                               QListWidget, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
                                QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import config
@@ -32,7 +32,7 @@ from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
 from .dialogs import (ClusterButtonsDialog, ClusterDialog, EditQsoDialog, FKeyDialog, KeyerDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
                       WsjtxDialog,
                       StationDialog)
-from .docks import Pane
+from .docks import GridCanvas, Pane
 from .needed_pane import NeededPane
 from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
@@ -45,7 +45,16 @@ VOICE_MODES = ("SSB", "AM", "FM")
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
-LAYOUT_VERSION = "7"     # bump when panes are added/renamed so old saved layouts are dropped
+LAYOUT_VERSION = "grid1"  # bump when panes are added/renamed so old saved layouts are dropped
+
+# Where each pane starts on the grid (24 columns wide; rows are 22 px): x, y, width, height
+DEFAULT_GRID = {
+    "Bands": (0, 0, 2, 28), "Entry": (2, 0, 14, 10), "Log": (2, 10, 6, 18),
+    "Spots": (8, 10, 8, 12), "Telnet": (8, 22, 8, 6), "Score": (16, 0, 8, 9),
+    "Check Partial": (16, 9, 8, 5), "Rate": (16, 14, 8, 8), "Needed": (16, 22, 8, 6),
+    "Network": (16, 28, 8, 6),
+}
+DEFAULT_MINIMIZED = ("Network",)
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 OP_RE = re.compile(r"^[A-Z0-9]{3,}(/[A-Z0-9]+)*$")
 
@@ -100,7 +109,6 @@ class MainWindow(QMainWindow):
         self._build_shortcuts()
         self._refresh_radio()
 
-        self._factory_state = self.saveState()      # the panes as built, before any saved layout
         saved_op = self._op_layout(self.current_op)
         geo = saved_op["geometry"] if saved_op else self.settings.value("geometry")
         if geo:
@@ -109,27 +117,11 @@ class MainWindow(QMainWindow):
             avail = self.screen().availableGeometry()
             self.resize(int(avail.width() * 0.92), int(avail.height() * 0.9))
         self._fit_to_screen()
-        st = saved_op["state"] if saved_op else self.settings.value("window_state")
-        if not saved_op and str(self.settings.value("layout_version", "")) != LAYOUT_VERSION:
-            st = None                                # panes changed: start from the default layout
-        if st:
-            self.restoreState(st)
-            mins = saved_op["minimized"] if saved_op else str(self.settings.value("minimized_panes", "") or "")
-            sizes = saved_op["sizes"] if saved_op else str(self.settings.value("pane_sizes", "") or "")
-
-            def after_shown():
-                # Qt loses the right column's width when the state is restored before the
-                # window is on screen (with the empty-space area): restore it again now.
-                self.restoreState(st)
-                self._finish_layout(sizes, mins)
-            QTimer.singleShot(0, after_shown)
+        grid = saved_op["grid"] if saved_op else self._load_grid_setting("grid_layout")
+        if grid:
+            self.canvas.from_dict(grid)
         else:
-            # Qt leaves a stray tab bar if two tab groups are made before the window
-            # is first shown, so build the default tabs right after it appears.
-            QTimer.singleShot(0, self._default_tabs)
-        for d in self.panes:                       # popped-out panes get real window buttons
-            if d.isFloating():
-                d._on_top_level(True)
+            self.reset_layout()
 
         self._ticks = 0
         self.clock = QTimer(self, interval=1000, timeout=self._tick)
@@ -220,24 +212,23 @@ class MainWindow(QMainWindow):
         v.addLayout(fk)
         self.tx_lbl = QLabel()
         v.addWidget(self.tx_lbl)
-        # The entry line is a pane too, sized to its contents. There is no central
-        # widget: the window is two pane columns (left: Entry over Log + Spots,
-        # right: Score / Check Partial / Rate). Don't use setCorner() here: with
-        # no central widget it makes Qt widen the right column by a splitter
-        # width on every re-layout (each keystroke), squeezing the other panes.
+        # Every pane, the entry line included, is a tile on a grid (see docks.py).
         v.setContentsMargins(8, 4, 8, 4)
         v.setSpacing(4)
-        w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        self.setDockNestingEnabled(True)
-        self.set_free_layout(self.free_layout, save=False)
+        self.canvas = GridCanvas()
+        self.canvas.layoutChanged.connect(lambda: None)
+        self.grid_scroll = QScrollArea()
+        self.grid_scroll.setWidgetResizable(True)
+        self.grid_scroll.setFrameShape(QFrame.NoFrame)
+        self.grid_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.grid_scroll.setWidget(self.canvas)
+        self.setCentralWidget(self.grid_scroll)
         # Bands: a narrow column of band buttons down the left edge
         self.band_pane = BandPane()
         self.band_pane.bandClicked.connect(self.go_to_band)
         self.band_pane.set_bands(["160m", "80m", "40m", "20m", "15m", "10m"])
-        self._dock("Bands", self.band_pane, Qt.LeftDockWidgetArea)
-        self.dock_bands.widget().setMinimumWidth(56)
-        self._dock("Entry", w, Qt.LeftDockWidgetArea, closable=False, scroll=False)   # sized to its contents
-        self.splitDockWidget(self.dock_bands, self.dock_entry, Qt.Horizontal)
+        self._dock("Bands", self.band_pane)
+        self._dock("Entry", w, closable=False)
 
         # Log pane
         self.log_table = QTableWidget(0, 9)
@@ -248,8 +239,7 @@ class MainWindow(QMainWindow):
         self.log_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.log_table.verticalHeader().setVisible(False)
         self.log_table.doubleClicked.connect(self.edit_selected)
-        self._dock("Log", self.log_table, Qt.LeftDockWidgetArea)
-        self.splitDockWidget(self.dock_entry, self.dock_log, Qt.Vertical)
+        self._dock("Log", self.log_table)
 
         # Score pane
         self.score_table = QTableWidget(0, 4)
@@ -258,17 +248,17 @@ class MainWindow(QMainWindow):
         self.score_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.score_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.score_table.verticalHeader().setDefaultSectionSize(22)
-        self._dock("Score", self.score_table, Qt.RightDockWidgetArea)
+        self._dock("Score", self.score_table)
 
         # Partials pane (SCP + log)
         self.partials = QListWidget()
         self.partials.itemClicked.connect(lambda it: (self.call.setText(it.text()),
                                                       self._on_call_edited(it.text())))
-        self._dock("Check Partial", self.partials, Qt.RightDockWidgetArea)
+        self._dock("Check Partial", self.partials)
 
         # Rate pane
         self.rate_pane = RatePane()
-        self._dock("Rate", self.rate_pane, Qt.RightDockWidgetArea)
+        self._dock("Rate", self.rate_pane)
 
         # DX cluster: telnet client, Spots window (mults / Qs), Telnet window (raw text)
         self.cluster = ClusterClient(self)
@@ -296,16 +286,14 @@ class MainWindow(QMainWindow):
         self._cl_out: list[str] = []               # cluster text waiting to go to networked stations
         self._cl_flush = QTimer(self, singleShot=True, interval=300, timeout=self._flush_cluster_share)
         self._spotted: set[tuple] = set()          # (call, band) we've spotted this session
-        self._dock("Spots", self.spots_pane, Qt.LeftDockWidgetArea)
-        self.splitDockWidget(self.dock_log, self.dock_spots, Qt.Horizontal)
-        self._dock("Telnet", self.telnet_pane, Qt.LeftDockWidgetArea)
-        self.splitDockWidget(self.dock_spots, self.dock_telnet, Qt.Horizontal)   # tabbed after show
+        self._dock("Spots", self.spots_pane)
+        self._dock("Telnet", self.telnet_pane)
 
         # Needed window: every mult x band, colored by need / spotted
         self.needed_pane = NeededPane(self.colors)
         self.needed_pane.spotActivated.connect(self.go_to_spot)
         self.needed_pane.colorsChanged.connect(self._save_colors)
-        self._dock("Needed", self.needed_pane, Qt.RightDockWidgetArea)
+        self._dock("Needed", self.needed_pane)
 
         # Local network: share the log with other tttlog stations
         self.net = NetNode(self.node_id, self)
@@ -319,7 +307,7 @@ class MainWindow(QMainWindow):
         self.net.clusterCommand.connect(self._on_network_cluster_command)
         self.network_pane.talkSent.connect(self._send_talk)
         self._net_dirty = QTimer(self, singleShot=True, interval=300, timeout=self._on_net_log_changed)
-        self._dock("Network", self.network_pane, Qt.RightDockWidgetArea)
+        self._dock("Network", self.network_pane)
 
         # WSJT-X / JTDX / MSHV: log what they log
         self.wsjtx = WsjtxListener(self)
@@ -338,9 +326,10 @@ class MainWindow(QMainWindow):
         self.keyer.problem.connect(lambda why: self.banner(why, "#ffd166"))
         self.keyer.recorded.connect(self._on_recorded)
 
-    def _dock(self, title, widget, area, closable=True, scroll=True):
-        d = Pane(title, widget, self, closable=closable, scroll=scroll)
-        self.addDockWidget(area, d)
+    def _dock(self, title, widget, closable=True, scroll=True):
+        d = Pane(title, widget, self.canvas, closable=closable, scroll=scroll)
+        x, y, w, h = DEFAULT_GRID[title]
+        self.canvas.add(d, QRect(x, y, w, h))
         setattr(self, f"dock_{title.replace(' ', '_').lower()}", d)
         return d
 
@@ -418,10 +407,6 @@ class MainWindow(QMainWindow):
         view.addAction(QAction("Restore all panes", self, shortcut="Ctrl+Shift+R",
                                triggered=self.restore_all_panes))
         view.addAction(QAction("Dock all pop-out windows", self, triggered=self.dock_all_panes))
-        self.free_layout_act = QAction("Leave empty space (panes don't have to fill the window)", self,
-                                       checkable=True, checked=self.free_layout,
-                                       toggled=self.set_free_layout)
-        view.addAction(self.free_layout_act)
         view.addSeparator()
         self.save_layout_act = QAction("Save layout for this operator", self, triggered=lambda: self.save_op_layout())
         view.addAction(self.save_layout_act)
@@ -1335,7 +1320,8 @@ class MainWindow(QMainWindow):
             self.banner("No needed spots in the current filter")
 
     def _focus_spot_search(self):
-        self.dock_spots.show(); self.dock_spots.raise_()
+        if not self.dock_spots.shown:
+            self.dock_spots.set_shown(True)
         self.dock_spots.set_minimized(False)
         self.spots_pane.search.setFocus(); self.spots_pane.search.selectAll()
 
@@ -1626,54 +1612,7 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------- panes
     @property
     def panes(self) -> list[Pane]:
-        return [w for w in self.findChildren(Pane)]
-
-    def _default_tabs(self):
-        self.tabifyDockWidget(self.dock_spots, self.dock_telnet)
-        self.tabifyDockWidget(self.dock_rate, self.dock_needed)
-        self.tabifyDockWidget(self.dock_needed, self.dock_network)
-        self.dock_spots.raise_()
-        self.dock_rate.raise_()
-        QTimer.singleShot(50, self._default_sizes)    # once the tabs have been laid out
-
-    def _default_sizes(self):
-        right = [self.dock_score, self.dock_check_partial, self.dock_rate]
-        # Set the column split from the left side (resizing the right column is
-        # ignored), in real pixels: small ratios like [2, 3] reset the column width.
-        self.resizeDocks([self.dock_bands], [self.dock_bands.content.sizeHint().width() + 8], Qt.Horizontal)
-        left = self.width() * 62 // 100 - self.dock_bands.width()
-        self.resizeDocks([self.dock_log, self.dock_spots], [left * 2 // 5, left * 3 // 5], Qt.Horizontal)
-        self.resizeDocks([self.dock_entry], [left], Qt.Horizontal)
-        if self.centralWidget() is not None:           # empty space on: start with no gap
-            self.resizeDocks([self.dock_score], [self.width() - left - self.dock_bands.width() - 12],
-                             Qt.Horizontal)
-        h = self.height()                               # small screens: shrink Score/Partial first
-        self.resizeDocks(right, [min(215, h * 28 // 100), min(120, h * 16 // 100),
-                                 max(150, h - min(215, h * 28 // 100) - min(120, h * 16 // 100) - 40)],
-                         Qt.Vertical)
-        self.resizeDocks([self.dock_entry], [self.dock_entry.content.sizeHint().height() + 24], Qt.Vertical)
-
-    # -- empty space between panes ----------------------------------------------
-    @property
-    def free_layout(self) -> bool:
-        v = self.settings.value("free_layout", True)
-        return v in (True, "true", "1", 1)
-
-    def set_free_layout(self, on: bool, save: bool = True):
-        """On: an empty area sits between the left and right pane columns, so panes
-        can be made smaller than the window (drag the edge between a column and the
-        empty area; drag it all the way to close the gap). Off: panes fill the window."""
-        if save:
-            self.settings.setValue("free_layout", bool(on))
-        if on and self.centralWidget() is None:
-            gap = QWidget(objectName="emptySpace")
-            gap.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
-            gap.setMinimumSize(0, 0)
-            gap.setToolTip("Empty space: drag the pane edges to use it (View ▸ Leave empty space)")
-            self.setCentralWidget(gap)
-        elif not on and self.centralWidget() is not None:
-            old = self.takeCentralWidget()
-            old.deleteLater()
+        return list(self.canvas.panes.values())
 
     def _fit_to_screen(self):
         """Keep the window on a screen it fits: a layout saved on a big monitor
@@ -1699,55 +1638,33 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Display size",
                                 f"Display size set to {pct}%. Quit and restart tttlog to apply it.")
 
-    # -- layouts per operator ------------------------------------------------------
-    def _setting_list(self, key: str) -> list[str]:
-        v = self.settings.value(key, [])
-        if isinstance(v, str):
-            return [v] if v else []
-        return [str(x) for x in (v or [])]
-
-    def _minimized_names(self) -> list[str]:
-        return [d.objectName() for d in self.panes if d.minimized and not d.isFloating()]
-
-    def _minimized_json(self) -> str:
-        """Minimized panes, each with the heights restoring it should give back."""
+    # -- layouts (grid positions), per operator ----------------------------------------
+    def _load_grid_setting(self, key: str) -> dict | None:
         import json
-        return json.dumps({d.objectName(): d.restore_heights() for d in self.panes
-                           if d.minimized and not d.isFloating()})
+        if str(self.settings.value(f"{key}_version", "")) != LAYOUT_VERSION:
+            return None
+        try:
+            v = json.loads(str(self.settings.value(key, "") or ""))
+        except ValueError:
+            return None
+        return v if isinstance(v, dict) and v else None
 
-    def _apply_minimized(self, mins):
-        """mins: {pane name: restore heights} (or a plain list of names)."""
-        if isinstance(mins, str):
-            import json
-            try:
-                mins = json.loads(mins) if mins else {}
-            except ValueError:
-                mins = {}
-        if isinstance(mins, list):
-            mins = {n: {} for n in mins}
-        for d in self.panes:
-            want = d.objectName() in mins
-            if d.minimized != want and d.isVisible() and not d.isFloating():
-                d.set_minimized(want, restore_heights=mins.get(d.objectName()) if want else None)
+    def _save_grid_setting(self, key: str):
+        import json
+        self.settings.setValue(key, json.dumps(self.canvas.to_dict()))
+        self.settings.setValue(f"{key}_version", LAYOUT_VERSION)
 
     def _op_layout(self, op: str) -> dict | None:
-        key = f"layouts/{op.upper()}"
-        st = self.settings.value(f"{key}/state")
-        if not st or str(self.settings.value(f"{key}/version", "")) != LAYOUT_VERSION:
+        grid = self._load_grid_setting(f"layouts/{op.upper()}/grid")
+        if not grid:
             return None
-        return {"state": st, "geometry": self.settings.value(f"{key}/geometry"),
-                "minimized": str(self.settings.value(f"{key}/minimized", "") or ""),
-                "sizes": str(self.settings.value(f"{key}/sizes", "") or "")}
+        return {"grid": grid, "geometry": self.settings.value(f"layouts/{op.upper()}/geometry")}
 
     def save_op_layout(self, op: str | None = None, quiet: bool = False):
-        """Remember the window layout for an operator (View ▸ Save layout; also on OPON and on close)."""
+        """Remember the layout for an operator (View ▸ Save layout; also on OPON and on close)."""
         op = (op or self.current_op).upper()
-        key = f"layouts/{op}"
-        self.settings.setValue(f"{key}/state", self.saveState())
-        self.settings.setValue(f"{key}/geometry", self.saveGeometry())
-        self.settings.setValue(f"{key}/minimized", self._minimized_json())
-        self.settings.setValue(f"{key}/sizes", self._sizes_json())
-        self.settings.setValue(f"{key}/version", LAYOUT_VERSION)
+        self._save_grid_setting(f"layouts/{op}/grid")
+        self.settings.setValue(f"layouts/{op}/geometry", self.saveGeometry())
         if not quiet:
             self.banner(f"Layout saved for {op}: OPON {op} brings it back")
 
@@ -1755,66 +1672,18 @@ class MainWindow(QMainWindow):
         lay = self._op_layout(op)
         if not lay:
             return False
-        for d in self.panes:                         # unroll quietly; the saved state sets the sizes
-            d.unroll_now()
-        self.restoreState(lay["state"])              # panes only: the window stays where it is
-        QTimer.singleShot(0, lambda: self._finish_layout(lay["sizes"], lay["minimized"]))
+        self.canvas.from_dict(lay["grid"])           # panes only: the window stays where it is
         return True
 
-    def _sizes_json(self) -> str:
-        """Each docked pane's width and height, as if none were minimized (a minimized
-        pane's column is recorded with the heights restoring it gives back)."""
-        import json
-        from .docks import _docked
-        sizes = {d.objectName(): [d.width(), d.height()] for d in _docked(self)}
-        for d in self.panes:
-            if d.minimized:
-                for name, h in d.restore_heights().items():
-                    if name in sizes:
-                        sizes[name][1] = h
-        return json.dumps(sizes)
-
-    def _finish_layout(self, sizes: str, mins):
-        """After restoreState has placed the panes: set each pane's exact size (Qt's own
-        restore drifts, by a lot on Windows), then roll up the minimized ones."""
-        import json
-        from .docks import _docked
-        try:
-            want = json.loads(sizes) if sizes else {}
-        except ValueError:
-            want = {}
-        def apply():
-            docks = [d for d in _docked(self) if d.objectName() in want]
-            if docks:
-                self.resizeDocks(docks, [want[d.objectName()][0] for d in docks], Qt.Horizontal)
-                # A tabbed pane's height doesn't count its tab bar the same way both ways, so
-                # tabbed panes just take what's left in their column.
-                untabbed = [d for d in docks if not self.tabifiedDockWidgets(d)]
-                if untabbed:
-                    self.resizeDocks(untabbed, [want[d.objectName()][1] for d in untabbed], Qt.Vertical)
-
-        apply()
-        # Windows does another layout pass after restoreState that can undo the sizes:
-        # set them again once it has settled, then roll up the minimized panes.
-        QTimer.singleShot(60, lambda: (apply(), QTimer.singleShot(0, lambda: self._apply_minimized(mins))))
-
     def reset_layout(self):
-        """Back to tttlog's default arrangement (the operator's saved layout is kept
+        """Back to tttlog's default arrangement (an operator's saved layout is kept
         until they save again or OPON away)."""
-        for d in self.panes:
-            d.unroll_now()
-        for d in self.panes:
-            if d.isFloating():
-                d.setFloating(False)
-        self.restoreState(self._factory_state)
-        for d in self.panes:
-            d.show()
-        self.set_free_layout(self.free_layout, save=False)
-        QTimer.singleShot(0, self._default_tabs)
+        self.canvas.from_dict({f"dock_{name}": {"r": list(r), "min": name in DEFAULT_MINIMIZED, "shown": True}
+                               for name, r in DEFAULT_GRID.items()})
 
     def minimize_all_panes(self):
         for d in self.panes:
-            if d.isVisible():
+            if d.shown:
                 d.set_minimized(True)
 
     def restore_all_panes(self):
@@ -1831,11 +1700,11 @@ class MainWindow(QMainWindow):
     # ---------------------------------------------------------- close
     def closeEvent(self, ev):
         self.settings.setValue("geometry", self.saveGeometry())
-        self.settings.setValue("window_state", self.saveState())
-        self.settings.setValue("layout_version", LAYOUT_VERSION)
-        self.settings.setValue("minimized_panes", self._minimized_json())
-        self.settings.setValue("pane_sizes", self._sizes_json())
+        self._save_grid_setting("grid_layout")
         self.save_op_layout(quiet=True)
+        for d in self.panes:                        # popped-out panes are their own windows
+            if d.isFloating():
+                d.hide()
         self.cluster.disconnect_from()
         self.net.stop()
         self.wsjtx.stop()

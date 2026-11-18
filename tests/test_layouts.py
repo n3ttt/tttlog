@@ -1,149 +1,195 @@
-"""Panes stay put when one is minimized; layouts are kept per operator (OPON)."""
+"""Panes on a grid: move and resize with snapping and pushing, minimize, pop out and
+put back, drop where you want, and layouts kept per operator. Positions are checked
+in grid cells, so these behave the same on Mac, Windows and Linux."""
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+from PySide6.QtGui import QMouseEvent
 
+from tttlog.ui.docks import COLS, push_down
 from test_rig import _pump, app, win  # noqa: F401  (fixtures)
 
-NAMES = ("entry", "log", "spots", "telnet", "score", "check_partial", "rate")
 
-
-def _geo(w):
-    return {n: getattr(w, "dock_" + n).geometry().getRect() for n in NAMES}
-
-
-# px: fonts and title bars differ a little between Mac, Windows and Linux. Linux comes back
-# up to 14 px wider in a very narrow column (Spots near its minimum width); not yet explained.
-TOL = 16
-
-
-def _same(a, b, tol=TOL):
-    """Two layouts match: every pane within a few pixels (a moved or resized pane is far more)."""
-    bad = {n: (a[n], b[n]) for n in a if any(abs(x - y) > tol for x, y in zip(a[n], b[n]))}
-    assert not bad, bad
-    return True
-
-
-def _settle(app, ms=250):
+def _settle(app, ms=200):
     _pump(app, lambda: False, ms)
 
 
-def _arrange(app, win):
-    """Telnet under Spots, narrow columns with empty space between (a user's own layout).
-    (Tests run on an 800x800 fake screen, so the window has to fit in that.)"""
-    win.resize(790, 740); win.show(); _settle(app, 700)
-    win.splitDockWidget(win.dock_spots, win.dock_telnet, Qt.Vertical); _settle(app)
-    win.resizeDocks([win.dock_score], [180], Qt.Horizontal)
-    win.resizeDocks([win.dock_log, win.dock_spots], [150, 250], Qt.Horizontal); _settle(app)
-    # The fake test screen is only 800 px wide. With Windows' and Linux's bigger fonts the
-    # panes' minimum widths don't fit this layout at all (the Entry pane alone needs ~626 px
-    # on Windows), so Qt can't build it and there's nothing meaningful to compare.
-    _skip_unless_fits(win, 150, 250)
+def _cells(w):
+    return {p.objectName()[5:]: p.grid.getRect() for p in w.panes}
 
 
-def _skip_unless_fits(win, log_w, spots_w):
-    fits = (abs(win.dock_log.width() - log_w) <= 2 and abs(win.dock_spots.width() - spots_w) <= 2
-            and win.dock_entry.minimumSizeHint().width() <= log_w + spots_w + 8)
-    if not fits:
-        import pytest
-        pytest.skip("this platform's minimum pane sizes don't fit the 800 px test screen")
+def _show(app, win):
+    win.resize(1280, 800); win.show(); _settle(app, 400)
+    win.reset_layout(); _settle(app)
+    return win.canvas
 
 
-def test_minimize_doesnt_move_other_panes(app, win):
-    _arrange(app, win)
-    before = _geo(win)
-    win.dock_telnet.set_minimized(True); _settle(app)
-    after = _geo(win)
-    others = {n: before[n] for n in NAMES if n not in ("spots", "telnet")}
-    _same(others, {n: after[n] for n in others})            # nothing else moves
-    assert abs(after["spots"][2] - before["spots"][2]) <= 2  # Spots keeps its width...
-    assert after["spots"][3] > before["spots"][3] + 100     # ...and grows down into the space
-    win.dock_telnet.set_minimized(False); _settle(app)
-    _same(_geo(win), before)                                # restore puts everything back
+def _cell_px(c, x, y):
+    """Global point of the top-left of grid cell (x, y), a little inside it."""
+    r = c.to_px(QRect(x, y, 1, 1))
+    return c.mapToGlobal(r.topLeft() + QPoint(3, 3))
 
 
-def test_layout_per_operator(app, win):
-    _arrange(app, win)
-    win.opon("N3TTT")
-    win.dock_telnet.set_minimized(True); _settle(app)
-    mine = _geo(win)
-    win.opon("K3ABC")                                       # first time: keeps the current layout
-    assert "window layout" not in win.banner_lbl.text()
-    win.dock_telnet.set_minimized(False); _settle(app)        # let the restore finish first
-    win.resizeDocks([win.dock_log, win.dock_spots], [260, 140], Qt.Horizontal); _settle(app)
-    _skip_unless_fits(win, 260, 140)
-    theirs = _geo(win)
-    assert any(abs(x - y) > 50 for n in NAMES for x, y in zip(theirs[n], mine[n]))   # really different
-
-    win.opon("N3TTT"); _settle(app)                         # back to my layout
-    assert "N3TTT's window layout" in win.banner_lbl.text()
-    assert win.dock_telnet.minimized and _same(_geo(win), mine)
-    win.opon("K3ABC"); _settle(app)                         # and theirs was saved when they left
-    assert not win.dock_telnet.minimized and _same(_geo(win), theirs)
+def test_push_down():
+    r = {"a": QRect(0, 0, 4, 4), "b": QRect(2, 2, 4, 4), "c": QRect(2, 6, 4, 2), "d": QRect(10, 0, 2, 2)}
+    out = push_down(r, "a")
+    assert out["a"] == r["a"]
+    assert out["b"].y() == 4                        # pushed just below a
+    assert out["c"].y() == 8                        # ...and c below b in turn
+    assert out["d"] == r["d"]                       # not in the way: untouched
 
 
-def test_layout_survives_restart(app, win, tmp_path, monkeypatch):
-    import tttlog.ui.main_window as mw
-    _arrange(app, win)
-    win.dock_telnet.set_minimized(True); _settle(app)
-    before = _geo(win)
-    win.close()                                             # saves it (same QSettings file)
-    w2 = mw.MainWindow()
-    w2.show(); _settle(app, 700)
-    assert w2.dock_telnet.minimized
-    _same(_geo(w2), before)
-    w2.reset_layout(); _settle(app, 500)                    # View ▸ Reset to the default layout
-    assert not w2.dock_telnet.minimized and w2.dock_telnet.isVisible()
-    w2.close()
+def test_move_snaps_and_pushes_only_whats_in_the_way(app, win):
+    c = _show(app, win)
+    before = _cells(win)
+    log, spots = win.dock_log, win.dock_spots
+    start = log.bar.mapToGlobal(QPoint(30, 8))
+    c.begin_move(log, start)
+    # drag Log right by exactly Spots' x offset: it lands on Spots' cells
+    dx = c.to_px(spots.grid).x() - c.to_px(log.grid).x()
+    c.drag_move(start + QPoint(dx + 5, 0))
+    _settle(app)
+    assert c.ghost.isVisible()
+    assert spots.grid.y() >= log.grid.y() + 0 and spots.grid.y() == before["Log"][1] + before["Log"][3]
+    # dragged back where it came from: Spots slides back too (fluid)
+    c.drag_move(start)
+    _settle(app)
+    assert spots.grid.getRect() == before["Spots"]
+    c.drag_move(start + QPoint(dx + 5, 0))
+    c.end_drag(); _settle(app)
+    after = _cells(win)
+    assert after["Log"][:2] == (before["Spots"][0], before["Log"][1])
+    moved = {n for n in after if after[n] != before[n]}
+    assert moved <= {"Log", "Spots", "Telnet"}, moved   # Telnet was under Spots, so it shifts down too
+    assert not c.ghost.isVisible()
 
 
-def test_drop_a_popped_out_pane_where_you_want(app, win):
-    win.resize(790, 740); win.show(); _settle(app, 700)
-    tel, log = win.dock_telnet, win.dock_log
+def test_resize_pushes_and_snaps(app, win):
+    c = _show(app, win)
+    log, spots = win.dock_log, win.dock_spots
+    start = log.grip.mapToGlobal(QPoint(6, 6))
+    c.begin_resize(log, start)
+    c.drag_resize(start + QPoint(int(c.col_w() * 3), 0))          # three columns wider
+    c.end_drag(); _settle(app)
+    assert log.grid.width() == 9
+    assert spots.grid.y() >= log.grid.y() + log.grid.height()       # was beside it: pushed down
+    assert log.grid.x() + log.grid.width() <= COLS
 
-    def drop_on(pane, fx, fy):
-        g = pane.geometry()
-        return win.mapToGlobal(g.topLeft() + type(g.topLeft())(int(g.width() * fx), int(g.height() * fy)))
 
+def test_minimize_moves_nothing_else(app, win):
+    c = _show(app, win)
+    before = _cells(win)
+    win.dock_spots.set_minimized(True); _settle(app)
+    assert _cells(win) == before                                     # cells unchanged...
+    assert win.dock_spots.height() < 40                              # ...it just rolls up
+    win.dock_spots.set_minimized(False); _settle(app)
+    assert _cells(win) == before
+
+
+def test_pop_out_and_put_back_where_it_was(app, win):
+    c = _show(app, win)
+    tel = win.dock_telnet
+    home = tel.grid.getRect()
     tel.setFloating(True); _settle(app)
-    assert tel.drop_target(drop_on(log, 0.5, 0.5))[0] == "tab"
-    tel.drop_at(drop_on(log, 0.5, 0.95)); _settle(app)          # bottom edge of Log
-    assert not tel.isFloating()
-    assert abs(tel.x() - log.x()) <= 2 and tel.y() > log.y()   # under Log, same column
-    assert not win.tabifiedDockWidgets(tel)
-
-    tel.setFloating(True); _settle(app)
-    tel.drop_at(drop_on(log, 0.05, 0.5)); _settle(app)          # left edge of Log
-    assert tel.x() < log.x() and abs(tel.y() - log.y()) <= 2
-
-    tel.setFloating(True); _settle(app)
-    tel.drop_at(drop_on(log, 0.5, 0.5)); _settle(app)           # middle: a tab with Log
-    assert log in win.tabifiedDockWidgets(tel)
-
-    tel.setFloating(True); _settle(app)
-    assert tel.drop_at(win.mapToGlobal(win.rect().topLeft()) - type(win.pos())(50, 50)) is False
-    assert tel.isFloating()                                     # dropped off the window: stays out
+    assert tel.isFloating() and tel.isWindow()
+    assert tel.windowFlags() & Qt.WindowMinimizeButtonHint
+    # meanwhile Spots is stretched down into Telnet's spot
+    win.dock_spots.grid.setHeight(win.dock_spots.grid.height() + 4); c.relayout()
+    tel.toggle_floating(); _settle(app)                               # ⇲
+    assert not tel.isFloating() and tel.grid.getRect() == home       # exactly where it was...
+    sp = win.dock_spots.grid
+    assert sp.y() + sp.height() <= home[1] or sp.y() >= home[1] + home[3] or \
+        sp.x() + sp.width() <= home[0] or sp.x() >= home[0] + home[2]  # ...with no overlap
 
 
-def test_drag_title_strip_to_dock(app, win):
-    from PySide6.QtCore import QEvent, QPointF
-    from PySide6.QtGui import QMouseEvent
-    win.resize(790, 740); win.show(); _settle(app, 700)
-    tel, log = win.dock_telnet, win.dock_log
+def test_drop_popped_out_pane_where_you_want(app, win):
+    c = _show(app, win)
+    tel = win.dock_telnet
     tel.setFloating(True); _settle(app)
     bar = tel.bar
 
     def send(kind, gpos, buttons):
-        local = QPointF(bar.mapFromGlobal(gpos))
-        ev = QMouseEvent(kind, local, QPointF(gpos), Qt.LeftButton, buttons, Qt.NoModifier)
+        ev = QMouseEvent(kind, QPointF(bar.mapFromGlobal(gpos)), QPointF(gpos), Qt.LeftButton, buttons,
+                         Qt.NoModifier)
         app.sendEvent(bar, ev)
 
-    start = bar.mapToGlobal(bar.rect().center())
-    target = win.mapToGlobal(log.geometry().center())
-    send(QEvent.MouseButtonPress, start, Qt.LeftButton)
+    target = _cell_px(c, 3, 2) + QPoint(int(c.col_w()), 8)          # cursor on its title, near the left
+    send(QEvent.MouseButtonPress, bar.mapToGlobal(QPoint(30, 8)), Qt.LeftButton)
     send(QEvent.MouseMove, target, Qt.LeftButton)
-    assert tel._band.isVisible()                                # the drop preview shows
+    assert c.ghost.isVisible()                                       # shows where it will land
     send(QEvent.MouseButtonRelease, target, Qt.NoButton)
     _settle(app)
-    assert not tel.isFloating() and log in win.tabifiedDockWidgets(tel)
+    assert not tel.isFloating() and tel.grid.topLeft() == QPoint(3, 2)
+    e = win.dock_entry.grid                                          # what was there got bumped down
+    assert e.y() >= tel.grid.y() + tel.grid.height() or e.x() >= tel.grid.x() + tel.grid.width()
+
+    tel.setFloating(True); _settle(app)
+    assert c.drop_floating(tel, c.mapToGlobal(QPoint(-200, -200))) is False
+    assert tel.isFloating()                                          # dropped off the window: stays out
+    tel.setFloating(False)
+
+
+def test_drag_by_title_bar_on_the_grid(app, win):
+    c = _show(app, win)
+    rate, bar = win.dock_rate, win.dock_rate.bar
+
+    def send(kind, gpos, buttons):
+        ev = QMouseEvent(kind, QPointF(bar.mapFromGlobal(gpos)), QPointF(gpos), Qt.LeftButton, buttons,
+                         Qt.NoModifier)
+        app.sendEvent(bar, ev)
+
+    start = bar.mapToGlobal(QPoint(30, 8))
+    down = QPoint(0, 3 * (22 + 4))                                    # three rows down
+    send(QEvent.MouseButtonPress, start, Qt.LeftButton)
+    send(QEvent.MouseMove, start + down, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, start + down, Qt.NoButton)
+    _settle(app)
+    assert rate.grid.y() == 14 + 3
+
+
+def test_close_and_reopen_comes_back_in_place(app, win):
+    _show(app, win)
+    sc = win.dock_score
+    home = sc.grid.getRect()
+    sc.close(); _settle(app)
+    assert not sc.isVisible() and not sc.toggleViewAction().isChecked()
+    sc.toggleViewAction().setChecked(True); _settle(app)
+    assert sc.isVisible() and sc.grid.getRect() == home
+
+
+def test_layout_per_operator(app, win):
+    c = _show(app, win)
+    win.opon("N3TTT")
+    win.dock_telnet.set_minimized(True)
+    c.place(win.dock_log, QRect(2, 12, 5, 16)); _settle(app)
+    mine = _cells(win)
+    win.opon("K3ABC")                                                # first time: keeps the current layout
+    assert "window layout" not in win.banner_lbl.text()
+    win.dock_telnet.set_minimized(False)
+    c.place(win.dock_log, QRect(2, 10, 10, 10)); _settle(app)
+    theirs = _cells(win)
+    assert theirs != mine
+
+    win.opon("N3TTT"); _settle(app)                                  # back to my layout
+    assert "N3TTT's window layout" in win.banner_lbl.text()
+    assert win.dock_telnet.minimized and _cells(win) == mine
+    win.opon("K3ABC"); _settle(app)                                  # and theirs was saved when they left
+    assert not win.dock_telnet.minimized and _cells(win) == theirs
+
+
+def test_layout_survives_restart(app, win):
+    import tttlog.ui.main_window as mw
+    c = _show(app, win)
+    win.dock_telnet.set_minimized(True)
+    c.place(win.dock_rate, QRect(10, 30, 6, 7))
+    win.dock_score.close()
+    before = _cells(win)
+    win.close()                                                      # saves it (same settings file)
+    w2 = mw.MainWindow()
+    w2.show(); _settle(app, 300)
+    assert _cells(w2) == before
+    assert w2.dock_telnet.minimized and not w2.dock_score.shown
+    w2.reset_layout(); _settle(app)                                  # View ▸ Reset to the default layout
+    assert not w2.dock_telnet.minimized and w2.dock_score.shown
+    w2.close()
