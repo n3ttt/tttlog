@@ -43,6 +43,13 @@ from .wsjtx_listener import WsjtxListener
 
 VOICE_MODES = ("SSB", "AM", "FM")
 
+# Keys you can change in Config ▸ Keyboard shortcuts: name -> (what it does, default)
+EDITABLE_SHORTCUTS = {
+    "go_needed": ("Go to the newest needed spot (remembers your run frequency)", "Ctrl+G"),
+    "swap_run": ("Back to the run frequency / back to the spot", "Ctrl+B"),
+    "toggle_run": ("Toggle Run / S&P", "Ctrl+R"),
+}
+
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
 LAYOUT_VERSION = "grid2"  # bump when panes are added/renamed so old saved layouts are dropped
@@ -170,6 +177,13 @@ class MainWindow(QMainWindow):
         self.mode_box.setSizeAdjustPolicy(QComboBox.AdjustToContents)
         self.mode_box.textActivated.connect(self._on_mode_box)
         top.addWidget(self.mode_box)
+        self.run_btn = QPushButton("RUN")
+        self.run_btn.setCheckable(True)
+        self.run_btn.setFocusPolicy(Qt.NoFocus)
+        self.run_btn.setStyleSheet("QPushButton { font-weight: bold; min-width: 44px; padding: 2px 6px; }"
+                                   "QPushButton:checked { background: #2da44e; color: white; }")
+        self.run_btn.clicked.connect(lambda: (self.toggle_run(), self.call.setFocus()))
+        top.addWidget(self.run_btn)
         top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
         top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
@@ -239,7 +253,21 @@ class MainWindow(QMainWindow):
         self.log_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.log_table.verticalHeader().setVisible(False)
         self.log_table.doubleClicked.connect(self.edit_selected)
-        self._dock("Log", self.log_table)
+        log_box = QWidget()
+        lv = QVBoxLayout(log_box)
+        lv.setContentsMargins(0, 0, 0, 0); lv.setSpacing(2)
+        lv.addWidget(self.log_table, 1)
+        self.alerts_lbl = QLabel()
+        self.alerts_lbl.setStyleSheet("font-weight: bold; padding: 2px 4px;")
+        lv.addWidget(self.alerts_lbl)
+        self.alerts = QListWidget()                 # needed mults as they're spotted, newest first
+        self.alerts.setFocusPolicy(Qt.NoFocus)
+        self.alerts.setMaximumHeight(92)
+        self.alerts.setStyleSheet("QListWidget { font: 10pt 'Menlo', 'Consolas', monospace; }")
+        self.alerts.itemClicked.connect(self._on_alert_clicked)
+        lv.addWidget(self.alerts)
+        self._alerted: dict[tuple, object] = {}    # (call, band) -> when we said so
+        self._dock("Log", log_box)
 
         # Score pane
         self.score_table = QTableWidget(0, 4)
@@ -353,7 +381,8 @@ class MainWindow(QMainWindow):
                 a.setShortcut(QKeySequence(key))
             f.addAction(a)
         op = mb.addMenu("&Operating")
-        op.addAction(QAction("Toggle Run / S&&P", self, shortcut="Ctrl+R", triggered=self.toggle_run))
+        op.addAction(self._shortcut_action("toggle_run", "Toggle Run / S&&P", self.toggle_run))
+        op.addAction(self._shortcut_action("swap_run", "Back to run frequency / back to the spot", self.swap_run))
         op.addAction(QAction("Set frequency…", self, shortcut="Ctrl+F", triggered=self.ask_freq))
         op.addAction(QAction("Operator on (OPON)…", self, shortcut="Ctrl+Shift+O",
                              triggered=lambda: self.opon()))
@@ -369,6 +398,7 @@ class MainWindow(QMainWindow):
         cfg.addAction(QAction("WSJT-X…", self, triggered=self.edit_wsjtx))
         cfg.addAction(QAction("Radio…", self, triggered=self.edit_radio))
         cfg.addAction(QAction("Voice && CW keyer…", self, triggered=self.edit_keyer))
+        cfg.addAction(QAction("Keyboard shortcuts…", self, triggered=self.edit_shortcuts))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -385,8 +415,7 @@ class MainWindow(QMainWindow):
                                         toggled=self._set_auto_spot)
         cl.addAction(self.auto_spot_action)
         cl.addSeparator()
-        cl.addAction(QAction("Go to newest needed spot", self, shortcut="Ctrl+G",
-                             triggered=self.go_to_next_needed))
+        cl.addAction(self._shortcut_action("go_needed", "Go to newest needed spot", self.go_to_next_needed))
         cl.addAction(QAction("Search spots", self, shortcut="Ctrl+Shift+F",
                              triggered=self._focus_spot_search))
         cl.addSeparator()
@@ -497,6 +526,11 @@ class MainWindow(QMainWindow):
 
     def _refresh_radio(self):
         self._sync_mode_box()
+        if hasattr(self, "run_btn"):
+            self.run_btn.setChecked(self.run_mode)
+            self.run_btn.setText("RUN" if self.run_mode else "S&&P")
+            self.run_btn.setToolTip(f"Run or Search & Pounce ({self._key('toggle_run')})")
+        self._refresh_alert_hint()
         band = band_from_khz(self.freq_khz) or "?"
         self.band_pane.set_current(band)
         self.radio_lbl.setText(f"{self.freq_khz:,.1f} kHz  {band}  {self.mode}  "
@@ -855,8 +889,120 @@ class MainWindow(QMainWindow):
             self._restrike_spots()
 
     def toggle_run(self):
+        if self.run_mode:                            # leaving the run frequency: remember it
+            self.run_memory = {"freq": self.freq_khz, "mode": self.mode}
         self.run_mode = not self.run_mode
+        if self.run_mode:
+            self.run_memory = {"freq": self.freq_khz, "mode": self.mode}
         self._refresh_radio()
+
+    # ---------------------------------------------------------- editable shortcuts
+    def _key(self, name: str) -> str:
+        """The key for an editable shortcut, as shown to the user (e.g. Ctrl+G, ⌘G on a Mac)."""
+        seq = str(self.settings.value(f"shortcuts/{name}", EDITABLE_SHORTCUTS[name][1]) or "")
+        return QKeySequence(seq).toString(QKeySequence.NativeText) or "(no key)"
+
+    def _shortcut_action(self, name: str, text: str, slot) -> QAction:
+        if not hasattr(self, "shortcut_actions"):
+            self.shortcut_actions = {}
+        a = QAction(text, self, triggered=slot)
+        a.setShortcut(QKeySequence(str(self.settings.value(f"shortcuts/{name}", EDITABLE_SHORTCUTS[name][1]) or "")))
+        a.setShortcutContext(Qt.ApplicationShortcut)            # works from popped-out panes too
+        self.shortcut_actions[name] = a
+        return a
+
+    def set_shortcut(self, name: str, seq: str):
+        self.settings.setValue(f"shortcuts/{name}", seq)
+        self.shortcut_actions[name].setShortcut(QKeySequence(seq))
+        self._refresh_alert_hint()
+
+    def edit_shortcuts(self):
+        from .dialogs import ShortcutsDialog
+        cur = {n: str(self.settings.value(f"shortcuts/{n}", d) or "") for n, (_t, d) in EDITABLE_SHORTCUTS.items()}
+        taken = {a.shortcut().toString(): a.text().replace("&&", "&") for a in self.findChildren(QAction)
+                 if not a.shortcut().isEmpty() and a not in self.shortcut_actions.values()}
+        dlg = ShortcutsDialog(EDITABLE_SHORTCUTS, cur, taken, self)
+        if dlg.exec():
+            for n, seq in dlg.values().items():
+                self.set_shortcut(n, seq)
+
+    # ---------------------------------------------------------- needed-mult messages
+    def _maybe_alert(self, s):
+        """A spot that's a new multiplier for us: say so under the Log (once per call and band
+        every 10 minutes), unless the spot filter hides it or we can't transmit there."""
+        if s.status != "MULT" or s.band is None:
+            return
+        from ..core.cluster import spot_passes
+        if not spot_passes(s, self.spots_pane.spot_filter, self.spots_pane.home) or self._spot_privilege(s):
+            return
+        key = (s.call, s.band)
+        last = self._alerted.get(key)
+        if last is not None and (s.time_utc - last).total_seconds() < 600:
+            return
+        self._alerted[key] = s.time_utc
+        from PySide6.QtWidgets import QListWidgetItem
+        what = []
+        for lbl, key in s.keys:                      # e.g. ("Countries", ("20m", "Japan")) -> "Japan"
+            if lbl in s.mults:
+                v = str(key[-1])
+                what.append(f"zone {v}" if v.isdigit() else v)
+        it = QListWidgetItem(f"{s.time_utc:%H%M}Z  {s.call:<10} {s.freq_khz:>9.1f}  {s.band:<4} "
+                             f"{', '.join(dict.fromkeys(what)) or ', '.join(s.mults)}")
+        it.setData(Qt.UserRole, s)
+        it.setToolTip(f"Click (or {self._key('go_needed')}) to go there; {self._key('swap_run')} brings you back "
+                      f"to your run frequency")
+        self.alerts.insertItem(0, it)
+        while self.alerts.count() > 30:
+            self.alerts.takeItem(self.alerts.count() - 1)
+        self._refresh_alert_hint()
+
+    def _on_alert_clicked(self, item):
+        s = item.data(Qt.UserRole)
+        if s is not None:
+            self.go_to_spot(s)
+            self.call.setFocus()
+
+    def _refresh_alert_hint(self):
+        if hasattr(self, "alerts_lbl"):
+            n = self.alerts.count()
+            self.alerts_lbl.setText(f"Needed mults spotted ({n}) · {self._key('go_needed')} go · "
+                                    f"{self._key('swap_run')} back to run" if n else
+                                    f"Needed mults spotted show here · {self._key('go_needed')} go · "
+                                    f"{self._key('swap_run')} back to run")
+
+    def swap_run(self):
+        """Back to the run frequency (and Run); pressed again, back to the spot you left."""
+        if not self.run_mode:
+            if not getattr(self, "run_memory", None):
+                self.banner("No run frequency remembered yet: it's kept when you leave Run "
+                            "(jump to a spot, or toggle to S&P)", "#ffd166")
+                return
+            self.sp_memory = {"freq": self.freq_khz, "mode": self.mode, "call": self.call.text()}
+            rm = self.run_memory
+            if rm["mode"] != self.mode:
+                self.set_mode(rm["mode"])
+            self.set_freq(rm["freq"])
+            self.run_mode = True
+            self.wipe()
+            self._refresh_radio()
+            self.banner(f"Back on your run frequency {rm['freq']:,.1f} · {self._key('swap_run')} returns to "
+                        f"{self.sp_memory['call'] or 'the spot'}")
+        else:
+            sp = getattr(self, "sp_memory", None)
+            if not sp:
+                self.banner("No spot to go back to", "#ffd166")
+                return
+            self.run_memory = {"freq": self.freq_khz, "mode": self.mode}
+            if sp["mode"] != self.mode:
+                self.set_mode(sp["mode"])
+            self.set_freq(sp["freq"])
+            self.run_mode = False
+            self.wipe()
+            if sp.get("call"):
+                self.call.setText(sp["call"]); self._on_call_edited(sp["call"])
+            self._refresh_radio()
+            self.banner(f"Back to {sp.get('call') or 'the spot'} · {self._key('swap_run')} returns to your run "
+                        f"frequency {self.run_memory['freq']:,.1f}")
 
     # ---------------------------------------------------------- log pane
     def _refresh_log(self):
@@ -1153,6 +1299,7 @@ class MainWindow(QMainWindow):
         if s:
             self.spots_pane.add_spot(s, self.engine, self.qsos)
             self._refresh_needed()
+            self._maybe_alert(s)
 
     # -- shared cluster connection over the local network --------------------
     def _flush_cluster_share(self):
@@ -1299,6 +1446,9 @@ class MainWindow(QMainWindow):
 
     def go_to_spot(self, s):
         """QSY to a spot and put the call in the entry line (S&P)."""
+        if self.run_mode:                            # keep the run frequency to come back to
+            self.run_memory = {"freq": self.freq_khz, "mode": self.mode}
+            self.sp_memory = None
         if self.engine and s.mode in self.engine.rules.get("modes", []) and s.mode != self.mode:
             self.set_mode(s.mode)
         self.run_mode = False

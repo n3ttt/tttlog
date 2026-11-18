@@ -493,6 +493,50 @@ class ClusterButtonsDialog(QDialog):
         return [{"label": get(r, 0) or get(r, 1)[:12], "command": get(r, 1)} for r in range(12)]
 
 
+class ShortcutsDialog(QDialog):
+    """Config ▸ Keyboard shortcuts: change the keys for a few actions."""
+
+    def __init__(self, defs: dict, current: dict, taken: dict, parent=None):
+        from PySide6.QtWidgets import QKeySequenceEdit
+        from PySide6.QtGui import QKeySequence
+        super().__init__(parent)
+        self.setWindowTitle("Keyboard shortcuts")
+        self.defs, self.taken = defs, taken
+        f = QFormLayout(self)
+        self.edits = {}
+        for name, (text, default) in defs.items():
+            e = QKeySequenceEdit(QKeySequence(current.get(name, default)))
+            e.setMaximumSequenceLength(1)
+            reset = QPushButton("Default")
+            reset.clicked.connect(lambda _=False, e=e, d=default: e.setKeySequence(QKeySequence(d)))
+            row = QHBoxLayout(); row.addWidget(e, 1); row.addWidget(reset)
+            f.addRow(text, row)
+            self.edits[name] = e
+        self.warn = QLabel(); self.warn.setWordWrap(True); self.warn.setStyleSheet("color: #b35900;")
+        f.addRow(self.warn)
+        f.addRow(QLabel("Click a box and press the new key combination."))
+        self.box = _buttons(self)
+        f.addRow(self.box)
+        for e in self.edits.values():
+            e.keySequenceChanged.connect(self._check)
+        self._check()
+
+    def _check(self):
+        seqs = {n: e.keySequence().toString() for n, e in self.edits.items()}
+        msgs = []
+        used = [s for s in seqs.values() if s]
+        for n, sq in seqs.items():
+            if sq and used.count(sq) > 1:
+                msgs.append(f"{sq} is used twice")
+            elif sq in self.taken:
+                msgs.append(f"{sq} is already {self.taken[sq]}")
+        self.warn.setText(" · ".join(dict.fromkeys(msgs)))
+        self.box.button(QDialogButtonBox.Ok).setEnabled(not any("twice" in m for m in msgs))
+
+    def values(self) -> dict:
+        return {n: e.keySequence().toString() for n, e in self.edits.items()}
+
+
 class KeyerDialog(QDialog):
     """Config ▸ Voice & CW keyer: audio devices, PTT, CW keying, and recording messages."""
 

@@ -64,7 +64,8 @@ The same `build_app.py` builds a macOS version on a Mac.
 | **Ctrl+Shift+F1–F12** | Record that key's voice message (press again or Esc to stop) |
 | Right-click an F-key button | Edit that key (label, text, voice file), record or play its message, or edit all keys |
 | **PgUp / PgDn** | CW speed ±2 wpm |
-| **Ctrl+R** | Toggle Run / S&P |
+| **Ctrl+R** or the **RUN / S&P** button | Toggle Run / Search & Pounce |
+| **Ctrl+B** | Back to your run frequency (Run); press again to go back to the spot you left |
 | **Ctrl+F** | Set frequency |
 | **Esc** | Stop sending (or recording); when nothing is being sent, wipe the entry line |
 | Double-click a log row | Edit QSO |
@@ -72,7 +73,7 @@ The same `build_app.py` builds a macOS version on a Mac.
 
 | **Ctrl+K** | Connect / disconnect the DX cluster |
 | **F11** / **Ctrl+Shift+S** | Spot the last QSO (call + frequency) to the cluster |
-| **Ctrl+G** | Go to the newest needed spot (mults first, then Qs) |
+| **Ctrl+G** | Go to the newest needed spot (mults first, then Qs); if you were running, your run frequency is remembered for Ctrl+B |
 | **Ctrl+Shift+N / M / A** | Spots filter: mults + Qs / mults only / everything |
 | **Ctrl+Shift+J** | Spotters: anywhere → my CQ zone → my continent |
 | **Ctrl+Shift+K** | Skimmer spots: all → none → skimmers only |
@@ -81,7 +82,9 @@ The same `build_app.py` builds a macOS version on a Mac.
 | **Ctrl+Shift+F** | Search spots (call, country, or comment) |
 | Double-click a spot | QSY, switch to S&P, put the call in the entry line |
 
-(On a Mac, Ctrl is ⌘.)
+(On a Mac, Ctrl is ⌘.) Ctrl+G, Ctrl+B and Ctrl+R can be changed in Config ▸ Keyboard shortcuts.
+
+**Needed mults spotted:** under the Log, each new multiplier that shows up on the cluster gets a line (time, call, kHz, band, and what it is, e.g. Japan or zone 25), newest first. Only spots that pass your spot filter and that you can transmit on are listed, each call and band at most once every 10 minutes. Click a line to go there.
 
 The banner under the entry line goes red for a **DUPE**, green for a **NEW MULT**, and yellow for **not valid / bad exchange**.
 ## Windows (panes)
