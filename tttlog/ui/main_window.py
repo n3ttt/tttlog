@@ -149,6 +149,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(5000, self.auto_update_check)
         if self.cluster_cfg.get("auto_connect"):
             self.cluster_connect(True)
+        self._seed_profiles()                         # operators' layouts / classes known here
         if self.net_cfg.get("enabled"):
             self.net.start(self.net_cfg)
         if self.wsjtx_cfg.get("enabled"):
@@ -333,6 +334,7 @@ class MainWindow(QMainWindow):
         self.net.contestWarning.connect(self._on_contest_warning)
         self.net.clusterLines.connect(self._on_shared_cluster_lines)
         self.net.clusterCommand.connect(self._on_network_cluster_command)
+        self.net.profileReceived.connect(self._on_profile_received)
         self.network_pane.talkSent.connect(self._send_talk)
         self._net_dirty = QTimer(self, singleShot=True, interval=300, timeout=self._on_net_log_changed)
         self._dock("Network", self.network_pane)
@@ -1160,6 +1162,7 @@ class MainWindow(QMainWindow):
 
     def set_license_class(self, op: str, cls: str):
         self.settings.setValue(f"op_class/{op.upper()}", privileges.normalize(cls))
+        self._profile_changed(op.upper())
         self.banner(f"{op}: {privileges.normalize(cls) or 'no'} band limits")
         self._check_privileges()
         self._restrike_spots()
@@ -1815,8 +1818,66 @@ class MainWindow(QMainWindow):
         op = (op or self.current_op).upper()
         self._save_grid_setting(f"layouts/{op}/grid")
         self.settings.setValue(f"layouts/{op}/geometry", self.saveGeometry())
+        self._profile_changed(op)
         if not quiet:
             self.banner(f"Layout saved for {op}: OPON {op} brings it back")
+
+    # -- operator profiles travel between networked stations ---------------------------
+    def _profile_data(self, op: str) -> dict:
+        """What follows an operator to another station: pane layout and license class
+        (not window size or position: every computer's screen is different)."""
+        import json
+        op = op.upper()
+        d = {}
+        grid = self._load_grid_setting(f"layouts/{op}/grid")
+        if grid:
+            d["grid"], d["v"] = grid, LAYOUT_VERSION
+        cls = self.settings.value(f"op_class/{op}")
+        if cls is not None:
+            d["class"] = str(cls)
+        return d
+
+    def _profile_changed(self, op: str):
+        import time as _t
+        at = _t.time()
+        self.settings.setValue(f"layouts/{op}/at", at)
+        if self.net.running:
+            self.net.publish_profile(op, self._profile_data(op), at)
+        else:
+            self.net.profiles[op] = (at, self._profile_data(op))
+
+    def _seed_profiles(self):
+        """Give the network node every operator profile saved on this computer."""
+        self.settings.beginGroup("layouts")
+        ops = [g for g in self.settings.childGroups()]
+        self.settings.endGroup()
+        self.settings.beginGroup("op_class")
+        ops += [k for k in self.settings.childKeys()]
+        self.settings.endGroup()
+        for op in dict.fromkeys(o.upper() for o in ops):
+            try:
+                at = float(self.settings.value(f"layouts/{op}/at", 0) or 0)
+            except (TypeError, ValueError):
+                at = 0.0
+            data = self._profile_data(op)
+            if data:
+                self.net.profiles[op] = (at, data)
+
+    def _on_profile_received(self, op: str, data: dict, at: float):
+        """Another station saved this operator's profile: keep it for their next OPON here."""
+        import json
+        try:
+            mine = float(self.settings.value(f"layouts/{op}/at", 0) or 0)
+        except (TypeError, ValueError):
+            mine = 0.0
+        if at <= mine:
+            return
+        if isinstance(data.get("grid"), dict) and data.get("v") == LAYOUT_VERSION:   # same grid as ours
+            self.settings.setValue(f"layouts/{op}/grid", json.dumps(data["grid"]))
+            self.settings.setValue(f"layouts/{op}/grid_version", LAYOUT_VERSION)
+        if "class" in data:
+            self.settings.setValue(f"op_class/{op}", privileges.normalize(str(data["class"])))
+        self.settings.setValue(f"layouts/{op}/at", at)
 
     def load_op_layout(self, op: str) -> bool:
         lay = self._op_layout(op)

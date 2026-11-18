@@ -274,3 +274,64 @@ def test_two_windows_share_one_cluster_connection(app, tmp_path, monkeypatch):
     for w in wins:
         w.close()
     server.close()
+
+
+def test_operator_profile_follows_to_another_station(app, tmp_path, monkeypatch):
+    """K3ABC sets up their panes and license class at RUN; OPON K3ABC at MULT brings both."""
+    from PySide6.QtCore import QRect, QSettings
+    from tttlog import config
+    from tttlog.contests.engine import Station
+    import tttlog.ui.main_window as mw
+    for name in ("STATION_FILE", "MACROS_FILE", "CLUSTER_FILE", "COLORS_FILE"):
+        monkeypatch.setattr(config, name, tmp_path / "cfg" / getattr(config, name).name)
+    monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / "cfg")
+    config.save_station(Station(call="N3TTT", state="DE", cq_zone=5, license_class="Extra"))
+
+    wins = []
+    for name in ("RUN", "MULT"):
+        ini = str(tmp_path / f"{name}.ini")
+        monkeypatch.setattr(mw, "QSettings", lambda *a, ini=ini: QSettings(ini, QSettings.IniFormat))
+        peers = [f"127.0.0.1:{wins[0].net.port}"] if wins else []
+        cfg = {**config.DEFAULT_NETWORK, "enabled": True, "station_name": name, "net_name": "T",
+               "tcp_port": 0, "udp_port": 0, "peers": peers}
+        monkeypatch.setattr(config, "load_network", lambda cfg=cfg: dict(cfg))
+        monkeypatch.setattr(config, "node_id", lambda name=name: f"node-{name}")
+        w = mw.MainWindow()
+        w.resize(1200, 760); w.show()
+        wins.append(w)
+    run, mult = wins
+    assert wait(lambda: run.net.linked() and mult.net.linked())
+
+    run.opon("K3ABC")
+    run.set_license_class("K3ABC", "General")
+    run.canvas.place(run.dock_log, QRect(3, 12, 20, 14))
+    run.dock_telnet.set_minimized(True)
+    run.opon("N3TTT")                                   # K3ABC leaves RUN: their profile is sent
+    theirs = run.dock_log.grid.getRect()
+    assert wait(lambda: mult.settings.value("op_class/K3ABC") == "General")
+
+    mult.opon("K3ABC")                                  # ...and sits down at MULT
+    wait(lambda: False, 0.3)
+    assert mult.license_class == "General"
+    assert mult.dock_log.grid.getRect() == (3, 12, 20, 14) and mult.dock_telnet.minimized
+    assert "K3ABC's window layout" in mult.banner_lbl.text()
+
+    for w in wins:
+        w.close()
+
+
+def test_profiles_newest_wins_and_late_stations_catch_up(app, tmp_path):
+    a = station(tmp_path, "RUN")
+    b = station(tmp_path, "MULT", peers=[f"127.0.0.1:{a.port}"])
+    assert wait(lambda: a.linked() and b.linked())
+    got = []
+    b.profileReceived.connect(lambda op, d, at: got.append((op, d, at)))
+    a.publish_profile("k3abc", {"class": "General"}, 100.0)
+    assert wait(lambda: got and got[-1][0] == "K3ABC")
+    a.publish_profile("K3ABC", {"class": "Extra"}, 50.0)         # older than what's known: ignored
+    wait(lambda: False, 0.3)
+    assert b.profiles["K3ABC"] == (100.0, {"class": "General"})
+    c = station(tmp_path, "CW", peers=[f"127.0.0.1:{a.port}"])   # links later
+    assert wait(lambda: c.profiles.get("K3ABC") == (100.0, {"class": "General"}))
+    for n in (a, b, c):
+        n.stop()

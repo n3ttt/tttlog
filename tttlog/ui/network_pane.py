@@ -143,6 +143,7 @@ class NetNode(QObject):
     contestWarning = Signal(str)           # a linked station is on another contest
     clusterLines = Signal(str, list)       # shared cluster text: (source station name, lines)
     clusterCommand = Signal(str, str)      # (from station, command) for our cluster connection
+    profileReceived = Signal(str, dict, float)   # operator, profile (layout, license class), when saved
 
     def __init__(self, node_id: str, parent=None):
         super().__init__(parent)
@@ -173,6 +174,8 @@ class NetNode(QObject):
         self.cluster_up = False            # we're connected to a DX cluster and share it
         self._warned: set[tuple] = set()   # (peer, contest) already warned about
         self._reaper = QTimer(self, singleShot=True, interval=0, timeout=self._reap)
+        # Operator profiles (OPON follows the operator to any station): op -> (saved at, data)
+        self.profiles: dict[str, tuple[float, dict]] = {}
 
     # ------------------------------------------------------------ control
     @property
@@ -288,6 +291,16 @@ class NetNode(QObject):
             self.cluster_up = up
             if self.links:
                 self._send_status()
+
+    def publish_profile(self, op: str, data: dict, at: float) -> None:
+        """An operator's profile changed here: keep it and send it to every station."""
+        op = op.upper()
+        if op in self.profiles and self.profiles[op][0] >= at:
+            return
+        self.profiles[op] = (at, data)
+        mid = uuid.uuid4().hex
+        self._remember(mid)
+        self._send_all({"t": "op", "id": mid, "op": op, "at": at, "d": data})
 
     def talk(self, text: str) -> None:
         mid = uuid.uuid4().hex
@@ -477,6 +490,16 @@ class NetNode(QObject):
                 self._send_all(m, skip=link)
                 self.peersChanged.emit()
             return False
+        if t == "op" and isinstance(m.get("id"), str) and m["id"] not in self._seen_set:
+            self._remember(m["id"])
+            op, at, data = m.get("op"), m.get("at"), m.get("d")
+            if isinstance(op, str) and isinstance(at, (int, float)) and isinstance(data, dict) and op:
+                op = op.upper()[:16]
+                if op not in self.profiles or at > self.profiles[op][0]:      # newer than ours
+                    self.profiles[op] = (float(at), data)
+                    self.profileReceived.emit(op, data, float(at))
+                    self._send_all(m, skip=link)
+            return False
         if t == "talk" and isinstance(m.get("id"), str) and m["id"] not in self._seen_set:
             self._remember(m["id"])
             self.talkReceived.emit(str(m.get("name", "?"))[:16], str(m.get("text", ""))[:500])
@@ -515,6 +538,10 @@ class NetNode(QObject):
         if isinstance(m.get("port"), int):
             self._known.add((link.addr[0], m["port"]))
         link.send(self._status_msg())
+        for op, (at, data) in self.profiles.items():          # catch a newly linked station up
+            mid = uuid.uuid4().hex
+            self._remember(mid)
+            link.send({"t": "op", "id": mid, "op": op, "at": at, "d": data})
         if link.share:
             vec = m.get("vector") if isinstance(m.get("vector"), dict) else {}
             for ev in self.sync.events_after(vec):
