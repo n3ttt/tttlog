@@ -141,6 +141,16 @@ Operators: type **OPON** + Enter in the call field (or **OPON K3ABC**, or Operat
 
 The network name keeps separate groups apart; it isn't a password. Use it only on a network you trust.
 
+## WSJT-X (FT8 / FT4)
+
+tttlog can log the QSOs you log in WSJT-X (or JTDX / MSHV). It only listens; it doesn't control WSJT-X.
+1. In tttlog: Config ▸ WSJT-X…, tick **Log QSOs from WSJT-X**. The defaults (127.0.0.1, port 2237) match WSJT-X's.
+2. In WSJT-X: File ▸ Settings ▸ Reporting ▸ **UDP Server** = 127.0.0.1, port 2237.
+
+When you click **Log QSO** in WSJT-X, the QSO goes into the open tttlog log with its frequency, mode, reports and time, and to the other networked stations. In a general log the grid and name go in the notes. The top bar shows **● WSJT-X** while WSJT-X is heard (○ when it's quiet or closed). The same QSO sent twice is logged once.
+
+If GridTracker or JTAlert already uses port 2237, set WSJT-X and every listening program (tttlog too) to a multicast address such as **224.0.0.1** so they all get each QSO.
+
 ## Contests
 
 Each contest is one YAML file in `tttlog/contests/rules/`. Add a new file to add a contest; nothing needs recompiling.

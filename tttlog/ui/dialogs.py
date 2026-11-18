@@ -248,3 +248,37 @@ class NetworkDialog(QDialog):
                    tcp_port=self.tcp.value(), udp_port=self.udp.value(),
                    peers=[p.strip() for p in self.peers.text().replace(";", ",").split(",") if p.strip()])
         return out
+
+
+class WsjtxDialog(QDialog):
+    """Config ▸ WSJT-X: log QSOs that WSJT-X / JTDX / MSHV logs."""
+
+    def __init__(self, cfg: dict, state: str = "", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("WSJT-X")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.enabled = QCheckBox("Log QSOs from WSJT-X (also JTDX, MSHV)")
+        self.enabled.setChecked(bool(cfg.get("enabled")))
+        self.address = QLineEdit(str(cfg.get("address", "127.0.0.1")))
+        self.address.setPlaceholderText("127.0.0.1, or a multicast group like 224.0.0.1")
+        self.port = QSpinBox(); self.port.setRange(1024, 65535); self.port.setValue(int(cfg.get("port", 2237)))
+        note = QLabel(
+            "In WSJT-X: File > Settings > Reporting > UDP Server. Use the same address and port as here "
+            "(WSJT-X's default is 127.0.0.1, port 2237). When you click Log QSO in WSJT-X, the QSO goes "
+            "into the open tttlog log (and to the other networked stations).\n"
+            "If GridTracker or JTAlert already listens on that port, set WSJT-X and all of them to a "
+            "multicast address such as 224.0.0.1 so each gets every QSO."
+            + (f"\nNow: {state}" if state else ""))
+        note.setWordWrap(True)
+        f.addRow(self.enabled)
+        f.addRow("UDP Server address", self.address)
+        f.addRow("UDP Server port", self.port)
+        f.addRow(note)
+        f.addRow(_buttons(self))
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(enabled=self.enabled.isChecked(),
+                   address=self.address.text().strip() or "127.0.0.1", port=self.port.value())
+        return out

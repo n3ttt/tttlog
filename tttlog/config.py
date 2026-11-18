@@ -15,6 +15,16 @@ CLUSTER_FILE = CONFIG_DIR / "cluster.yaml"
 COLORS_FILE = CONFIG_DIR / "colors.yaml"
 NETWORK_FILE = CONFIG_DIR / "network.yaml"
 NODE_ID_FILE = CONFIG_DIR / "node_id"
+WSJTX_FILE = CONFIG_DIR / "wsjtx.yaml"
+
+# WSJT-X (and JTDX / MSHV, which speak the same protocol): tttlog listens for
+# the UDP packet WSJT-X sends when you log a QSO there. Match WSJT-X's
+# Settings > Reporting > UDP Server (default 127.0.0.1 port 2237).
+DEFAULT_WSJTX = {
+    "enabled": False,
+    "address": "127.0.0.1",   # or a multicast group such as 224.0.0.1 to share with GridTracker/JTAlert
+    "port": 2237,
+}
 
 # Local network (several tttlog computers sharing one log). Stations find each
 # other with a UDP broadcast on udp_port and link over TCP on tcp_port.
@@ -165,6 +175,18 @@ def load_network() -> dict:
 def save_network(cfg: dict) -> None:
     NETWORK_FILE.parent.mkdir(parents=True, exist_ok=True)
     NETWORK_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+def load_wsjtx() -> dict:
+    cfg = dict(DEFAULT_WSJTX)
+    if WSJTX_FILE.exists():
+        cfg.update(yaml.safe_load(WSJTX_FILE.read_text()) or {})
+    return cfg
+
+
+def save_wsjtx(cfg: dict) -> None:
+    WSJTX_FILE.parent.mkdir(parents=True, exist_ok=True)
+    WSJTX_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
 
 
 def node_id() -> str:

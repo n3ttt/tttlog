@@ -20,15 +20,16 @@ from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
 from ..core.netsync import LogSync
-from ..export.adif import export_adif, import_adif
+from ..export.adif import export_adif, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
-from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, NewLogDialog,
+from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, NewLogDialog, WsjtxDialog,
                       StationDialog)
 from .docks import Pane
 from .needed_pane import NeededPane
 from .network_pane import NetNode, NetworkPane
 from .rate_pane import RatePane
+from .wsjtx_listener import WsjtxListener
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
@@ -57,6 +58,7 @@ class MainWindow(QMainWindow):
         self.cluster_cfg = config.load_cluster()
         self.colors = config.load_colors()
         self.net_cfg = config.load_network()
+        self.wsjtx_cfg = config.load_wsjtx()
         self.node_id = config.node_id()
         self.sync: LogSync | None = None
         self.cty_missing = not data_file("cty.dat").exists()
@@ -111,6 +113,8 @@ class MainWindow(QMainWindow):
             self.cluster_connect(True)
         if self.net_cfg.get("enabled"):
             self.net.start(self.net_cfg)
+        if self.wsjtx_cfg.get("enabled"):
+            self.wsjtx.start(self.wsjtx_cfg)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -123,7 +127,9 @@ class MainWindow(QMainWindow):
         self.score_lbl = QLabel("Score 0", objectName="score")
         for lbl in (self.radio_lbl, self.score_lbl):          # wrap rather than widen the window
             lbl.setWordWrap(True)
-        top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.clock_lbl)
+        self.wsjtx_lbl = QLabel(visible=False)
+        top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.wsjtx_lbl)
+        top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
         v.addLayout(top)
 
@@ -239,6 +245,11 @@ class MainWindow(QMainWindow):
         self._net_dirty = QTimer(self, singleShot=True, interval=300, timeout=self._on_net_log_changed)
         self._dock("Network", self.network_pane, Qt.RightDockWidgetArea)
 
+        # WSJT-X / JTDX / MSHV: log what they log
+        self.wsjtx = WsjtxListener(self)
+        self.wsjtx.adifLogged.connect(self._on_wsjtx_logged)
+        self.wsjtx.stateChanged.connect(self._on_wsjtx_state)
+
     def _dock(self, title, widget, area, closable=True, scroll=True):
         d = Pane(title, widget, self, closable=closable, scroll=scroll)
         self.addDockWidget(area, d)
@@ -277,6 +288,7 @@ class MainWindow(QMainWindow):
         cfg.addAction(QAction("Function-key macros…", self, triggered=self.edit_macros))
         cfg.addAction(QAction("DX cluster…", self, triggered=self.edit_cluster))
         cfg.addAction(QAction("Local network…", self, triggered=self.edit_network))
+        cfg.addAction(QAction("WSJT-X…", self, triggered=self.edit_wsjtx))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -870,6 +882,60 @@ class MainWindow(QMainWindow):
             self.net.stop()
         self._refresh_network_pane()
 
+    # ---------------------------------------------------------- WSJT-X
+    def edit_wsjtx(self):
+        dlg = WsjtxDialog(self.wsjtx_cfg, self.wsjtx.state if self.wsjtx.is_listening() else "", self)
+        if not dlg.exec():
+            return
+        self.wsjtx_cfg = dlg.values()
+        config.save_wsjtx(self.wsjtx_cfg)
+        if self.wsjtx_cfg["enabled"]:
+            self.wsjtx.start(self.wsjtx_cfg)
+        else:
+            self.wsjtx.stop()
+
+    def _on_wsjtx_state(self, text: str):
+        on = text != "off"
+        self.wsjtx_lbl.setVisible(on)
+        ok = text.startswith("connected")
+        self.wsjtx_lbl.setText(("● " if ok else "○ ") + "WSJT-X")
+        self.wsjtx_lbl.setStyleSheet(f"color: {'#2a9d4b' if ok else '#c77d00'}; font-weight: bold;")
+        self.wsjtx_lbl.setToolTip(f"WSJT-X: {text}  (Config ▸ WSJT-X)")
+
+    def _on_wsjtx_logged(self, adif: str, peer: str):
+        """WSJT-X logged a QSO: put it in this log (and share it)."""
+        qsos = parse_adif(adif, general=bool(self.engine and self.engine.is_general))
+        if not qsos:
+            return
+        if not self.engine or not self.sync:
+            self.banner(f"{peer} logged {qsos[0].call}, but no log is open here — File ▸ Open log", "#ffd166")
+            return
+        for q in qsos:
+            if self._already_logged(q):
+                self.banner(f"{peer}: {q.call} on {q.band} {q.mode} is already in the log")
+                continue
+            if not q.freq_khz:
+                q.freq_khz = self.freq_khz
+            q.contest_id = self.engine.rules["id"]
+            q.station_call = q.station_call or self.station.call
+            q.operator = q.operator or self.current_op
+            q.rst_sent = q.rst_sent or self.engine.default_rst(q.mode)
+            q.rst_rcvd = q.rst_rcvd or self.engine.default_rst(q.mode)
+            if not self.engine.is_general and not q.exch_sent:
+                q.exch_sent = self.engine.sent_exchange()
+            self.engine.annotate(q, self.qsos)
+            self.net.publish(self.sync.local_put(q))
+            self.qsos.append(q)
+            warn = "" if q.mode in self.engine.rules["modes"] else f"  ({q.mode} isn't a mode in this contest)"
+            self._refresh_log()
+            self.banner(f"From {peer}: logged {q.call}  {q.country}  {q.band} {q.mode}"
+                        + ("  (DUPE)" if q.is_dupe else "") + warn, "#ffd166" if warn else "")
+
+    def _already_logged(self, q: QSO) -> bool:
+        """WSJT-X can send the same QSO again (re-log, restart): skip near-identical ones."""
+        return any(x.call == q.call and x.band == q.band and x.mode == q.mode
+                   and abs((x.time_utc - q.time_utc).total_seconds()) < 120 for x in self.qsos)
+
     def _on_net_log_changed(self):
         """QSOs came in from other stations: rescore everything and redraw."""
         if not self.log:
@@ -1012,6 +1078,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("layout_version", LAYOUT_VERSION)
         self.cluster.disconnect_from()
         self.net.stop()
+        self.wsjtx.stop()
         if self.log:
             self.log.close()
         super().closeEvent(ev)
