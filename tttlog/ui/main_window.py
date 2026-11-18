@@ -115,12 +115,13 @@ class MainWindow(QMainWindow):
         if st:
             self.restoreState(st)
             mins = saved_op["minimized"] if saved_op else str(self.settings.value("minimized_panes", "") or "")
+            sizes = saved_op["sizes"] if saved_op else str(self.settings.value("pane_sizes", "") or "")
 
             def after_shown():
                 # Qt loses the right column's width when the state is restored before the
                 # window is on screen (with the empty-space area): restore it again now.
                 self.restoreState(st)
-                QTimer.singleShot(0, lambda: self._apply_minimized(mins))   # once it's laid out
+                self._finish_layout(sizes, mins)
             QTimer.singleShot(0, after_shown)
         else:
             # Qt leaves a stray tab bar if two tab groups are made before the window
@@ -1735,7 +1736,8 @@ class MainWindow(QMainWindow):
         if not st or str(self.settings.value(f"{key}/version", "")) != LAYOUT_VERSION:
             return None
         return {"state": st, "geometry": self.settings.value(f"{key}/geometry"),
-                "minimized": str(self.settings.value(f"{key}/minimized", "") or "")}
+                "minimized": str(self.settings.value(f"{key}/minimized", "") or ""),
+                "sizes": str(self.settings.value(f"{key}/sizes", "") or "")}
 
     def save_op_layout(self, op: str | None = None, quiet: bool = False):
         """Remember the window layout for an operator (View ▸ Save layout; also on OPON and on close)."""
@@ -1744,6 +1746,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue(f"{key}/state", self.saveState())
         self.settings.setValue(f"{key}/geometry", self.saveGeometry())
         self.settings.setValue(f"{key}/minimized", self._minimized_json())
+        self.settings.setValue(f"{key}/sizes", self._sizes_json())
         self.settings.setValue(f"{key}/version", LAYOUT_VERSION)
         if not quiet:
             self.banner(f"Layout saved for {op}: OPON {op} brings it back")
@@ -1755,8 +1758,40 @@ class MainWindow(QMainWindow):
         for d in self.panes:                         # unroll quietly; the saved state sets the sizes
             d.unroll_now()
         self.restoreState(lay["state"])              # panes only: the window stays where it is
-        QTimer.singleShot(0, lambda: self._apply_minimized(lay["minimized"]))
+        QTimer.singleShot(0, lambda: self._finish_layout(lay["sizes"], lay["minimized"]))
         return True
+
+    def _sizes_json(self) -> str:
+        """Each docked pane's width and height, as if none were minimized (a minimized
+        pane's column is recorded with the heights restoring it gives back)."""
+        import json
+        from .docks import _docked
+        sizes = {d.objectName(): [d.width(), d.height()] for d in _docked(self)}
+        for d in self.panes:
+            if d.minimized:
+                for name, h in d.restore_heights().items():
+                    if name in sizes:
+                        sizes[name][1] = h
+        return json.dumps(sizes)
+
+    def _finish_layout(self, sizes: str, mins):
+        """After restoreState has placed the panes: set each pane's exact size (Qt's own
+        restore drifts, by a lot on Windows), then roll up the minimized ones."""
+        import json
+        from .docks import _docked
+        try:
+            want = json.loads(sizes) if sizes else {}
+        except ValueError:
+            want = {}
+        docks = [d for d in _docked(self) if d.objectName() in want]
+        if docks:
+            self.resizeDocks(docks, [want[d.objectName()][0] for d in docks], Qt.Horizontal)
+            # A tabbed pane's height doesn't count its tab bar the same way both ways, so
+            # tabbed panes just take what's left in their column.
+            untabbed = [d for d in docks if not self.tabifiedDockWidgets(d)]
+            if untabbed:
+                self.resizeDocks(untabbed, [want[d.objectName()][1] for d in untabbed], Qt.Vertical)
+        QTimer.singleShot(0, lambda: self._apply_minimized(mins))
 
     def reset_layout(self):
         """Back to tttlog's default arrangement (the operator's saved layout is kept
@@ -1794,6 +1829,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window_state", self.saveState())
         self.settings.setValue("layout_version", LAYOUT_VERSION)
         self.settings.setValue("minimized_panes", self._minimized_json())
+        self.settings.setValue("pane_sizes", self._sizes_json())
         self.save_op_layout(quiet=True)
         self.cluster.disconnect_from()
         self.net.stop()
