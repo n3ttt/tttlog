@@ -40,41 +40,95 @@ def test_push_down():
     assert out["d"] == r["d"]                       # not in the way: untouched
 
 
-def test_move_snaps_and_pushes_only_whats_in_the_way(app, win):
-    c = _show(app, win)
-    before = _cells(win)
-    log, spots = win.dock_log, win.dock_spots
-    start = log.bar.mapToGlobal(QPoint(30, 8))
-    c.begin_move(log, start)
-    # drag Log right by exactly Spots' x offset: it lands on Spots' cells
-    dx = c.to_px(spots.grid).x() - c.to_px(log.grid).x()
-    c.drag_move(start + QPoint(dx + 5, 0))
-    _settle(app)
-    assert c.ghost.isVisible()
-    assert spots.grid.y() >= log.grid.y() + 0 and spots.grid.y() == before["Log"][1] + before["Log"][3]
-    # dragged back where it came from: Spots slides back too (fluid)
-    c.drag_move(start)
-    _settle(app)
-    assert spots.grid.getRect() == before["Spots"]
-    c.drag_move(start + QPoint(dx + 5, 0))
-    c.end_drag(); _settle(app)
-    after = _cells(win)
-    assert after["Log"][:2] == (before["Spots"][0], before["Log"][1])
-    moved = {n for n in after if after[n] != before[n]}
-    assert moved <= {"Log", "Spots", "Telnet"}, moved   # Telnet was under Spots, so it shifts down too
-    assert not c.ghost.isVisible()
+class _Grid:
+    """A grid on its own (no main window): panes in a 1000 x 600 window, so there's a
+    known amount of room (22 rows)."""
+
+    def __init__(self, app, layout):
+        from PySide6.QtWidgets import QLabel, QScrollArea
+        from tttlog.ui.docks import GridCanvas, Pane
+        self.app = app
+        self.scroll = QScrollArea(); self.scroll.setWidgetResizable(True)
+        self.c = GridCanvas(); self.scroll.setWidget(self.c)
+        self.p = {}
+        for name, r in layout.items():
+            pane = Pane(name, QLabel(name), self.c)
+            self.c.add(pane, QRect(*r))
+            self.p[name] = pane
+        self.scroll.resize(1000, 600); self.scroll.show(); _settle(app)
+        self.c.relayout(); _settle(app)
+
+    def cells(self):
+        return {n: p.grid.getRect() for n, p in self.p.items()}
+
+    def drag(self, name, dcols=0, drows=0, resize=False):
+        """Drag a pane's title bar (or its corner grip) by whole cells."""
+        c, pane = self.c, self.p[name]
+        start = (pane.grip if resize else pane.bar).mapToGlobal(QPoint(6, 6))
+        d = QPoint(round(dcols * (c.col_w() + 4)), drows * (22 + 4))
+        (c.begin_resize if resize else c.begin_move)(pane, start)
+        (c.drag_resize if resize else c.drag_move)(start + d)
+        _settle(self.app, 50)
+        return start, d
+
+    def drop(self):
+        self.c.end_drag(); _settle(self.app)
+
+    def close(self):
+        self.scroll.close()
 
 
-def test_resize_pushes_and_snaps(app, win):
-    c = _show(app, win)
-    log, spots = win.dock_log, win.dock_spots
-    start = log.grip.mapToGlobal(QPoint(6, 6))
-    c.begin_resize(log, start)
-    c.drag_resize(start + QPoint(int(c.col_w() * 3), 0))          # three columns wider
-    c.end_drag(); _settle(app)
-    assert log.grid.width() == 9
-    assert spots.grid.y() >= log.grid.y() + log.grid.height()       # was beside it: pushed down
-    assert log.grid.x() + log.grid.width() <= COLS
+def test_move_snaps_and_pushes_only_whats_in_the_way(app):
+    g = _Grid(app, {"A": (0, 0, 8, 6), "B": (10, 0, 8, 6), "C": (10, 8, 8, 4), "D": (30, 0, 8, 6)})
+    assert g.c.rows() == 22
+    start, _ = g.drag("A", dcols=10)                       # onto B
+    assert g.c.ghost.isVisible()
+    assert g.cells()["B"][1] == 6 and g.cells()["C"][1] >= 12   # B slides down under A, C under B
+    g.c.drag_move(start); _settle(app, 50)                 # dragged back: they slide back (fluid)
+    assert g.cells()["B"] == (10, 0, 8, 6) and g.cells()["C"] == (10, 8, 8, 4)
+    g.drag("A", dcols=10); g.drop()
+    assert g.cells()["A"] == (10, 0, 8, 6) and g.cells()["D"] == (30, 0, 8, 6)   # D not in the way
+    assert not g.c.ghost.isVisible()
+    g.close()
+
+
+def test_pushed_pane_shrinks_at_the_bottom(app):
+    g = _Grid(app, {"A": (0, 0, 8, 10), "B": (10, 6, 8, 12), "C": (10, 18, 8, 4)})
+    g.drag("A", dcols=10); g.drop()                        # A (10 rows) onto B: B must fit in 22 rows
+    cells = g.cells()
+    assert cells["A"] == (10, 0, 8, 10)
+    b, cc = cells["B"], cells["C"]
+    assert b[1] == 10 and b[1] + b[3] <= cc[1]             # B moved down and got shorter...
+    assert cc[1] + cc[3] <= 22                             # ...and nothing went off the bottom
+    g.close()
+
+
+def test_move_refused_when_nothing_can_fit(app):
+    g = _Grid(app, {"A": (0, 0, 8, 21), "B": (10, 4, 8, 18)})
+    g.drag("A", dcols=10); g.drop()                        # 1 row left below A: B can't fit (min 2)
+    assert g.cells() == {"A": (0, 0, 8, 21), "B": (10, 4, 8, 18)}   # so A stays where it was
+    g.close()
+
+
+def test_hard_stop_at_the_edges(app):
+    g = _Grid(app, {"A": (0, 0, 8, 6)})
+    g.drag("A", dcols=100, drows=100); g.drop()            # way off the bottom right
+    a = g.cells()["A"]
+    assert a[0] + a[2] == 48 and a[1] + a[3] == 22         # stopped at the corner, still on screen
+    assert g.p["A"].geometry().bottom() <= g.scroll.viewport().height()
+    g.drag("A", dcols=-100, drows=-100); g.drop()
+    assert g.cells()["A"][:2] == (0, 0)
+    g.drag("A", dcols=100, drows=100, resize=True); g.drop()   # resize stops at the edges too
+    assert g.cells()["A"] == (0, 0, 48, 22)
+    g.close()
+
+
+def test_resize_pushes_and_snaps(app):
+    g = _Grid(app, {"A": (0, 0, 8, 6), "B": (10, 0, 8, 6)})
+    g.drag("A", dcols=3, resize=True); g.drop()
+    assert g.cells()["A"] == (0, 0, 11, 6)
+    assert g.cells()["B"][1] == 6                          # was beside it: pushed down
+    g.close()
 
 
 def test_minimize_moves_nothing_else(app, win):

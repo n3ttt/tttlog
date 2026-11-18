@@ -28,7 +28,7 @@ FLOAT_FLAGS = (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint |
                Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
                Qt.WindowCloseButtonHint)
 
-COLS = 24            # grid columns across the window (their width follows the window)
+COLS = 48            # grid columns across the window (their width follows the window)
 ROW_H = 22           # px per grid row
 GAP = 4              # px between tiles
 MIN_W, MIN_H = 2, 2  # smallest tile, in cells
@@ -53,19 +53,51 @@ def overlaps(a: QRect, b: QRect) -> bool:
         a.y() < b.y() + b.height() and b.y() < a.y() + a.height()
 
 
-def push_down(rects: dict, moved: str) -> dict:
+def push_down(rects: dict, moved: str, max_rows: int | None = None, fixed=()) -> dict | None:
     """rects: name -> QRect in cells. Move every rect that overlaps `moved` (and,
-    in turn, anything those overlap) straight down just far enough. `moved` stays."""
+    in turn, anything those overlap) straight down just far enough. `moved` stays.
+
+    With max_rows (the bottom of the window), a pushed rect that would go past it
+    gets shorter instead, as short as needed (down to MIN_H) to leave room for what
+    it pushes in turn; `fixed` ones (rolled up) can't shrink. If there's no way to
+    fit everything, returns None: that move isn't allowed."""
     out = {n: QRect(r) for n, r in rects.items()}
-    queue = [moved]
-    while queue:
-        a = queue.pop(0)
-        for n, r in out.items():
-            if n in (a, moved) or not overlaps(out[a], r):
+    if max_rows is None:
+        queue = [moved]
+        while queue:
+            a = queue.pop(0)
+            for n, r in out.items():
+                if n in (a, moved) or not overlaps(out[a], r):
+                    continue
+                r.moveTop(out[a].y() + out[a].height())
+                queue.append(n)
+        return out
+
+    def settle(name: str, cur: dict) -> dict | None:
+        """Push everything `name` now overlaps below it, recursively; None if it can't fit."""
+        for n in list(cur):
+            if n in (name, moved) or not overlaps(cur[name], cur[n]):
                 continue
-            r.moveTop(out[a].y() + out[a].height())
-            queue.append(n)
-    return out
+            top = cur[name].y() + cur[name].height()
+            r = cur[n]
+            if n in fixed:
+                heights = [r.height()]
+            else:
+                heights = range(min(r.height(), max_rows - top), MIN_H - 1, -1)
+            for h in heights:
+                if top + h > max_rows:
+                    continue
+                trial = {k: QRect(v) for k, v in cur.items()}
+                trial[n] = QRect(r.x(), top, r.width(), h)
+                done = settle(n, trial)
+                if done is not None:
+                    cur = done
+                    break
+            else:
+                return None
+        return cur
+
+    return settle(moved, out)
 
 
 # ------------------------------------------------------------------ title bar
@@ -374,24 +406,50 @@ class GridCanvas(QWidget):
             r.setHeight(1)
         return r
 
+    def rows(self) -> int:
+        """How many grid rows fit in the visible window (panes stop at its bottom)."""
+        vp = self.parentWidget()
+        h = vp.height() if vp is not None else self.height()
+        return max(MIN_H, int((h - GAP) // (ROW_H + GAP)))
+
+    def _fixed(self) -> set:
+        return {p.objectName() for p in self.on_grid() if p.minimized}
+
+    def _apply(self, new: dict, skip: Pane | None = None):
+        """Take pushed positions (and shrunk heights) from push_down's result."""
+        for p in self.on_grid():
+            if p is skip or p.objectName() not in new:
+                continue
+            r = new[p.objectName()]
+            p.grid.moveTop(r.y())
+            if not p.minimized:
+                p.grid.setHeight(r.height())
+
     def place(self, pane: Pane, rect: QRect):
-        """Put a pane at rect, pushing anything it overlaps down; others don't move otherwise."""
+        """Put a pane at rect, pushing anything it overlaps down (shrinking what would go
+        off the bottom); others don't move otherwise."""
         rect = self._clamp(rect)
         tiles = {p.objectName(): self.occupied(p) for p in self.on_grid()}
         tiles[pane.objectName()] = self.occupied(pane, rect)
-        new = push_down(tiles, pane.objectName())
-        for p in self.on_grid():
-            if p is pane:
-                p.grid = rect
-            else:
-                p.grid.moveTop(new[p.objectName()].y())
+        new = push_down(tiles, pane.objectName(), self.rows(), self._fixed())
+        if new is None:                                   # no room left: let it run below and scroll
+            new = push_down(tiles, pane.objectName())
+        pane.grid = rect
+        self._apply(new, skip=pane)
         self.relayout(animate=True)
         self.layoutChanged.emit()
 
-    def _clamp(self, r: QRect) -> QRect:
+    def _clamp(self, r: QRect, fit: bool = True) -> QRect:
+        """Keep a rect on the grid: inside the sides always, and (fit) above the bottom
+        of the visible window too."""
         w = max(MIN_W, min(COLS, r.width()))
         h = max(MIN_H, r.height())
-        return QRect(max(0, min(COLS - w, r.x())), max(0, r.y()), w, h)
+        y = max(0, r.y())
+        if fit:
+            rows = self.rows()
+            h = min(h, max(MIN_H, rows))
+            y = min(y, max(0, rows - h))
+        return QRect(max(0, min(COLS - w, r.x())), y, w, h)
 
     def relayout(self, animate: bool = False, skip: Pane | None = None):
         for a in self._anims:
@@ -446,7 +504,10 @@ class GridCanvas(QWidget):
         pane, delta = d["pane"], gpos - d["start"]
         geo = QRect(d["geo"])
         geo.translate(delta)
-        pane.move(geo.topLeft())                          # follows the mouse exactly
+        vis_h = self.parentWidget().height() if self.parentWidget() is not None else self.height()
+        geo.moveTo(max(0, min(self.width() - geo.width(), geo.x())),        # hard stop at the edges
+                   max(0, min(vis_h - geo.height(), geo.y())))
+        pane.move(geo.topLeft())                          # follows the mouse
         c = self.to_cell(geo.topLeft())
         target = self._clamp(QRect(c.x(), c.y(), pane.grid.width(), pane.grid.height()))
         self._preview(pane, target)
@@ -457,8 +518,9 @@ class GridCanvas(QWidget):
             return
         pane, delta = d["pane"], gpos - d["start"]
         geo = QRect(d["geo"])
-        geo.setWidth(max(40, geo.width() + delta.x()))
-        geo.setHeight(max(ROW_H * MIN_H, geo.height() + delta.y()))
+        vis_h = self.parentWidget().height() if self.parentWidget() is not None else self.height()
+        geo.setWidth(max(40, min(self.width() - geo.x(), geo.width() + delta.x())))   # stops at the edges
+        geo.setHeight(max(ROW_H * MIN_H, min(vis_h - geo.y(), geo.height() + delta.y())))
         pane.resize(geo.size())
         cw = self.col_w()
         w = round((geo.width() + GAP) / (cw + GAP))
@@ -473,15 +535,18 @@ class GridCanvas(QWidget):
         self.ghost.stackUnder(pane)
         if target == d["target"] and d.get("pushed"):
             return
-        d["target"] = target
         base = {n: QRect(r) for n, r in d["base"].items()}
         tiles = {n: self.occupied(self.panes[n], r) for n, r in base.items()}
         tiles[pane.objectName()] = self.occupied(pane, target)
-        new = push_down(tiles, pane.objectName())
+        new = push_down(tiles, pane.objectName(), self.rows(), self._fixed())
+        if new is None:                                   # would shove something off: stop here
+            self.ghost.setGeometry(self.to_px(d["target"]))
+            return
+        d["target"] = target
         for p in self.on_grid():                          # others slide out of the way (from where they were)
             if p is not pane:
                 p.grid = QRect(base[p.objectName()])
-                p.grid.moveTop(new[p.objectName()].y())
+        self._apply(new, skip=pane)
         d["pushed"] = True
         self.relayout(animate=True, skip=pane)
 
@@ -541,7 +606,7 @@ class GridCanvas(QWidget):
                 p.minimized = False
                 p.body.setVisible(True); p.grip.setVisible(True); p.bar.sync()
             x, y, w, h = item.get("r", [0, 0, 6, 6])
-            p.grid = self._clamp(QRect(x, y, w, h))
+            p.grid = self._clamp(QRect(x, y, w, h), fit=False)   # as saved: the window may not be shown yet
             p.shown = bool(item.get("shown", True))
             p._view_action.blockSignals(True); p._view_action.setChecked(p.shown)
             p._view_action.blockSignals(False)

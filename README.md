@@ -94,7 +94,7 @@ Every part of the window (Bands, Entry, Log, Spots, Telnet, Score, Check Partial
 - **⧉** pops it out into its own window, with the normal minimize, zoom, and close buttons. **⇲** (or double-clicking the title bar) puts it back exactly where it was, bumping anything now in that spot. Or drag it by tttlog's title strip (the bar with ⇲, not the system title bar) and drop it on the grid where you want it; dropped off the window, it stays popped out.
 - **×** closes it. Reopen it from the View menu; it comes back where it was.
 
-If panes go below the bottom of the window, it scrolls. View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once.
+Panes stop at the edges of the window: you can't drag or resize one past them. If a pane you move would push another off the bottom, that one gets shorter to fit instead; if there's no room even then, the move stops where it last fitted. (If you make the whole window smaller than your layout, it scrolls.) View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once.
 
 **Layouts are kept, per operator.** Where every pane is (in grid cells), which are rolled up, closed, or popped out is saved when tttlog closes and comes back next time, the same on Mac, Windows and Linux. Each operator has their own: **OPON** saves the outgoing operator's layout and switches to the incoming operator's (the first time someone logs on, they start from the current layout). View ▸ **Save layout for <op>** saves it right away; View ▸ **Reset to the default layout** goes back to tttlog's arrangement. Layouts are kept on each computer.
 

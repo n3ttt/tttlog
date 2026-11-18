@@ -45,14 +45,14 @@ VOICE_MODES = ("SSB", "AM", "FM")
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
-LAYOUT_VERSION = "grid1"  # bump when panes are added/renamed so old saved layouts are dropped
+LAYOUT_VERSION = "grid2"  # bump when panes are added/renamed so old saved layouts are dropped
 
-# Where each pane starts on the grid (24 columns wide; rows are 22 px): x, y, width, height
+# Where each pane starts on the grid (48 columns wide; rows are 22 px): x, y, width, height
 DEFAULT_GRID = {
-    "Bands": (0, 0, 2, 28), "Entry": (2, 0, 14, 10), "Log": (2, 10, 6, 18),
-    "Spots": (8, 10, 8, 12), "Telnet": (8, 22, 8, 6), "Score": (16, 0, 8, 9),
-    "Check Partial": (16, 9, 8, 5), "Rate": (16, 14, 8, 8), "Needed": (16, 22, 8, 6),
-    "Network": (16, 28, 8, 6),
+    "Bands": (0, 0, 3, 28), "Entry": (3, 0, 29, 10), "Log": (3, 10, 12, 18),
+    "Spots": (15, 10, 17, 12), "Telnet": (15, 22, 17, 6), "Score": (32, 0, 16, 9),
+    "Check Partial": (32, 9, 16, 5), "Rate": (32, 14, 16, 8), "Needed": (32, 22, 16, 6),
+    "Network": (32, 28, 16, 6),
 }
 DEFAULT_MINIMIZED = ("Network",)
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")

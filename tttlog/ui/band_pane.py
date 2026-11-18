@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QButtonGroup, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
 STYLE = """
-QPushButton { min-width: 0; padding: 2px 4px; font: bold 11pt; }
+QPushButton { min-width: 0; padding: 2px 1px; font: bold 11pt; }
 QPushButton:checked { background: #1f6feb; color: white; border: 1px solid #1158c7; border-radius: 3px; }
 """
 
@@ -28,7 +28,7 @@ class BandPane(QWidget):
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         self.buttons: dict[str, QPushButton] = {}
-        self.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)   # buttons fill the pane's width
 
     def set_bands(self, bands: list[str]) -> None:
         if list(self.buttons) == list(bands):
@@ -44,7 +44,7 @@ class BandPane(QWidget):
             b.setCheckable(True)
             b.setFocusPolicy(Qt.NoFocus)                  # keep typing in the call field
             b.setToolTip(f"Go to {band}")
-            b.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)       # any width: as narrow as the pane
             b.setMinimumHeight(24)
             b.setMaximumHeight(44)
             b.clicked.connect(lambda _=False, x=band: self.bandClicked.emit(x))
