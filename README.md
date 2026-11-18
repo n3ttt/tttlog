@@ -46,10 +46,10 @@ Optional: put a `MASTER.SCP` file in `data/` to get Super Check Partial suggesti
 
 ## Alpha testers (no Python needed)
 
-Every pull request and push to `main` builds a Windows zip on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts ▸ `tttlog-windows`).
+Every pull request and push to `main` builds a Windows zip on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts ▸ `tttlog-<version>-windows.zip`, one zip to extract). Released versions are on the [Releases](https://github.com/n3ttt/tttlog/releases) page.
 Testers unzip it and double-click `tttlog.exe`. The zip includes `README-FIRST.txt` ([docs/TESTERS.md](docs/TESTERS.md)) with first-run steps and how to report bugs.
 To build one yourself on Windows: `pip install pyinstaller`, `python scripts/update_cty.py`, then `python scripts/build_app.py`. The zip lands in `dist/`.
-Linux works the same way (Actions ▸ "Linux build" ▸ Artifacts ▸ `tttlog-linux`): a `.tar.gz` with one `tttlog-<version>-x86_64.AppImage` (the whole program in one file) and `install-linux.sh`, which adds it to the applications menu without root. Instructions: [docs/TESTERS-LINUX.md](docs/TESTERS-LINUX.md).
+Linux works the same way (Actions ▸ "Linux build" ▸ Artifacts ▸ `tttlog-<version>-linux-x86_64.tar.gz`): a `.tar.gz` with one `tttlog-<version>-x86_64.AppImage` (the whole program in one file) and `install-linux.sh`, which adds it to the applications menu without root. Instructions: [docs/TESTERS-LINUX.md](docs/TESTERS-LINUX.md).
 To build it on Linux: `python scripts/build_app.py`, then `APPIMAGETOOL=/path/to/appimagetool sh scripts/build_appimage.sh`.
 The same `build_app.py` builds a macOS version on a Mac.
 

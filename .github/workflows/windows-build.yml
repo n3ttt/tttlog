@@ -64,6 +64,8 @@ jobs:
       - name: Upload zip
         uses: actions/upload-artifact@v7
         with:
-          name: tttlog-windows
+          # As-is, not zipped again: the download is the versioned file itself
+          # (one unzip on Windows, not two). The file name is the artifact name.
+          archive: false
           path: dist/tttlog-*-windows.zip
           retention-days: 30

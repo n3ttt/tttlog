@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QGridLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
                                QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
@@ -160,6 +160,13 @@ class MainWindow(QMainWindow):
             lbl.setWordWrap(True)
         self.wsjtx_lbl = QLabel(visible=False)
         self.rig_lbl = QLabel(visible=False)
+        # Mode dropdown (shown when the log allows more than one mode, e.g. the General log)
+        self.mode_box = QComboBox()
+        self.mode_box.setFocusPolicy(Qt.NoFocus)             # typing stays in the entry line
+        self.mode_box.setToolTip("Mode (also: type the mode in the call field + Enter)")
+        self.mode_box.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.mode_box.textActivated.connect(self._on_mode_box)
+        top.addWidget(self.mode_box)
         top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
         top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
@@ -417,6 +424,26 @@ class MainWindow(QMainWindow):
         self.mode_menu.clear()
         for m in modes:
             self.mode_menu.addAction(QAction(m, self, triggered=lambda _=False, m=m: self.set_mode(m)))
+        self.mode_box.blockSignals(True)
+        self.mode_box.clear()
+        self.mode_box.addItems(list(modes))
+        self.mode_box.blockSignals(False)
+        self.mode_box.setVisible(len(modes) > 1)
+        self._sync_mode_box()
+
+    def _sync_mode_box(self):
+        if not hasattr(self, "mode_box"):
+            return
+        self.mode_box.blockSignals(True)
+        if self.mode_box.findText(self.mode) < 0 and self.mode:
+            self.mode_box.addItem(self.mode)                # e.g. a mode the radio switched to
+        self.mode_box.setCurrentText(self.mode)
+        self.mode_box.blockSignals(False)
+
+    def _on_mode_box(self, mode: str):
+        if mode and mode != self.mode:
+            self.set_mode(mode)
+        self.call.setFocus()
 
     def _build_shortcuts(self):
         for i in range(12):
@@ -462,6 +489,7 @@ class MainWindow(QMainWindow):
         self.rate_pane.update_rates(self.qsos, self.engine, now or utc_now(), me=self.current_op)
 
     def _refresh_radio(self):
+        self._sync_mode_box()
         band = band_from_khz(self.freq_khz) or "?"
         self.band_pane.set_current(band)
         self.radio_lbl.setText(f"{self.freq_khz:,.1f} kHz  {band}  {self.mode}  "

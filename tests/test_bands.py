@@ -56,3 +56,4 @@ def test_band_buttons(app, tmp_path, monkeypatch):
     w.call.setText("3525"); w.on_enter()                            # typed QSY lights the band
     assert p.buttons["80m"].isChecked()
     w.close()
+

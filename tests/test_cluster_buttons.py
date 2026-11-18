@@ -102,3 +102,15 @@ def test_edit_one_fkey(app, win, monkeypatch):
     win.mode = "CW"; win._refresh_radio()
     win.edit_fkey(2)                                            # CW page: no voice file
     assert config.load_macros()["CW"]["RUN"][2]["text"] == "TU {MYCALL} TEST" and recorded == [0]
+
+
+def test_mode_dropdown(app, win):
+    """General log: a mode dropdown in the main window (not just the menu)."""
+    box = win.mode_box
+    assert not box.isHidden()
+    modes = [box.itemText(i) for i in range(box.count())]
+    assert {"SSB", "CW", "FT8"} <= set(modes)
+    box.textActivated.emit("CW")                      # what picking it in the dropdown does
+    assert win.mode == "CW" and win.rst.text() == "599"
+    win.set_mode("FT8")                               # menu / typed / radio changes show in it
+    assert box.currentText() == "FT8"

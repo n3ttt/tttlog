@@ -65,6 +65,8 @@ jobs:
       - name: Upload DMG
         uses: actions/upload-artifact@v7
         with:
-          name: tttlog-macos-${{ matrix.arch }}
+          # As-is, not zipped again: the download is the versioned file itself
+          # (one unzip on Windows, not two). The file name is the artifact name.
+          archive: false
           path: dist/tttlog-*-macos-*.dmg
           retention-days: 30

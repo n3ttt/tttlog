@@ -23,7 +23,7 @@ jobs:
     needs: [mac, windows, linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: out
           merge-multiple: true

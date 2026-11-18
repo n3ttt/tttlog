@@ -76,6 +76,8 @@ jobs:
       - name: Upload package
         uses: actions/upload-artifact@v7
         with:
-          name: tttlog-linux
+          # As-is, not zipped again: the download is the versioned file itself
+          # (one unzip on Windows, not two). The file name is the artifact name.
+          archive: false
           path: dist/tttlog-*-linux-x86_64.tar.gz
           retention-days: 30
