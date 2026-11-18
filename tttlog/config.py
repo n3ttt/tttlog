@@ -28,6 +28,8 @@ DEFAULT_KEYER = {
     "cw": "cat",                # cat (radio sends the text) | dtr | rts (tttlog keys a serial line)
     "line_port": "",            # serial port for DTR/RTS keying / PTT (e.g. the FTDX10's Standard COM port)
     "wpm": 28,
+    "cut": "nt",                # cut numbers in CW: none | nt (5NN) | ant | all (core/keyer.py)
+    "cut_exch": False,          # also cut the exchange numbers (zone, serial), not just the RST
     "ptt_lead_ms": 120,         # PTT on -> audio starts
     "ptt_tail_ms": 150,         # audio ends -> PTT off
     "max_tx_secs": 90,          # hard stop: never stay keyed longer than this
@@ -265,10 +267,11 @@ def save_colors(c: dict) -> None:
     COLORS_FILE.write_text(yaml.safe_dump(c, sort_keys=False))
 
 
-def expand(text: str, station: Station, call: str, exch: str, rst: str = "59") -> str:
+def expand(text: str, station: Station, call: str, exch: str, rst: str = "59",
+           zone: str | None = None) -> str:
     return (text.replace("{MYCALL}", station.call).replace("{CALL}", call)
             .replace("{EXCH}", exch).replace("{RST}", rst)
-            .replace("{STATE}", station.state).replace("{ZONE}", str(station.cq_zone)))
+            .replace("{STATE}", station.state).replace("{ZONE}", str(station.cq_zone) if zone is None else zone))
 
 
 def load_keyer() -> dict:

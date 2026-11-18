@@ -663,8 +663,16 @@ class MainWindow(QMainWindow):
                 self.tx_lbl.setText(f"F{n + 1}: spotted last QSO to the cluster")
             return
         exch = self.engine.sent_exchange() if self.engine else ""
+        rst = self.engine.default_rst(self.mode) if self.engine else "59"
+        zone = str(self.station.cq_zone)
+        if self.mode == "CW":                                   # cut numbers: 599 -> 5NN
+            from ..core.keyer import cut_numbers
+            style = self.keyer_cfg.get("cut", "nt")
+            rst = cut_numbers(rst, style, rst=True)
+            if self.keyer_cfg.get("cut_exch"):
+                exch, zone = cut_numbers(exch, style), cut_numbers(zone, style)
         txt = config.expand(m.get("text", ""), self.station, self.call.text().strip().upper(),
-                            exch, self.engine.default_rst(self.mode) if self.engine else "59")
+                            exch, rst, zone)
         wav = m.get("wav", "")
         why = self.privilege_problem()
         if why and (self.mode in VOICE_MODES or self.mode == "CW"):

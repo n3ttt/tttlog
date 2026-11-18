@@ -222,6 +222,8 @@ Config ▸ Voice & CW keyer… sets it up. Nothing is ever transmitted until you
 | PTT | Radio CAT command (`ZZTX1;`) | Radio CAT command (`TX1;`) | Radio CAT command (`TX1;`) |
 | CW | Radio sends the text (`KY`) | DTR on the Standard COM port (radio menu PC KEYING = DTR); CAT can't send text | Radio sends the text (`KY`) |
 
+**Cut numbers (CW):** by default the RST goes out as **5NN** instead of 599. In Config ▸ Voice & CW keyer pick None, 9 → N and 0 → T, 1 → A as well, or the full set (1 A, 2 U, 3 V, 5 E, 7 B, 8 D, 9 N, 0 T). Tick **Also in the exchange** to cut the zone or serial number too (zone 5 → E, serial 001 → TTA). The RST's first digit always stays a number, and callsigns are never cut. Only what's sent changes; the log keeps 599.
+
 PTT can also be RTS or DTR on a keying serial port, or none (VOX). CW can also be a keyed DTR/RTS line on any radio (a USB keying interface, for example). The CW speed is set in the dialog and with PgUp/PgDn.
 
 ## WSJT-X (FT8 / FT4)

@@ -41,6 +41,29 @@ def cw_text(text: str) -> str:
     return re.sub(r" +", " ", t).strip()
 
 
+# Cut numbers: letters sent in place of digits in the exchange (599 -> 5NN).
+CUT_STYLES = {
+    "none": "None (599)",
+    "nt": "9 → N, 0 → T (5NN)",
+    "ant": "1 → A, 9 → N, 0 → T",
+    "all": "All: 1 A, 2 U, 3 V, 5 E, 7 B, 8 D, 9 N, 0 T",
+}
+_CUTS = {"none": {}, "nt": {"9": "N", "0": "T"}, "ant": {"1": "A", "9": "N", "0": "T"},
+         "all": {"1": "A", "2": "U", "3": "V", "5": "E", "7": "B", "8": "D", "9": "N", "0": "T"}}
+
+
+def cut_numbers(text: str, style: str, rst: bool = False) -> str:
+    """Replace digits with cut letters. For an RST the first digit stays a number,
+    so 599 is 5NN in every style (never 'ENN')."""
+    table = _CUTS.get(style, {})
+    if not table:
+        return text
+    if rst:
+        t = text.strip()
+        return t[:1] + "".join(table.get(c, c) for c in t[1:])
+    return "".join(table.get(c, c) for c in text)
+
+
 def cw_set_speed(wpm: int) -> bytes:
     return f"KS{max(5, min(60, int(wpm))):03d};".encode()
 

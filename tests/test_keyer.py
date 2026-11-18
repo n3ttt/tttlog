@@ -184,3 +184,31 @@ def test_record_assigns_a_file(app, win, monkeypatch):
     calls.clear()
     win.record_fkey(11)                                         # F12 = {CLEAR}: not a message
     assert not calls and "action key" in win.banner_lbl.text()
+
+
+def test_cut_numbers():
+    assert K.cut_numbers("599", "nt", rst=True) == "5NN"
+    assert K.cut_numbers("599", "all", rst=True) == "5NN"          # the 5 stays a 5 in an RST
+    assert K.cut_numbers("579", "all", rst=True) == "5BN"
+    assert K.cut_numbers("599", "none", rst=True) == "599"
+    assert K.cut_numbers("05", "nt") == "T5" and K.cut_numbers("001", "ant") == "TTA"
+    assert K.cut_numbers("14", "nt") == "14" and K.cut_numbers("14", "all") == "A4"
+
+
+def test_cw_macros_send_cut_numbers(app, win):
+    sent = []
+    win.keyer.send_cw = lambda t: sent.append(t) or True
+    win.mode = "CW"
+    win.macros["CW"]["RUN"][1]["text"] = "{RST} {ZONE}"
+    win.fkey(1)
+    assert sent[-1] == "5NN 5"                                    # default: 5NN, exchange as is
+    win.keyer_cfg.update(cut="all", cut_exch=True)
+    win.fkey(1)
+    assert sent[-1] == "5NN E"
+    win.keyer_cfg.update(cut="none")
+    win.fkey(1)
+    assert sent[-1] == "599 5"
+    win.macros["CW"]["RUN"][0]["text"] = "CQ {MYCALL}"            # callsigns are never cut
+    win.keyer_cfg.update(cut="all", cut_exch=True)
+    win.fkey(0)
+    assert sent[-1] == "CQ N3TTT"

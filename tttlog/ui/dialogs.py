@@ -453,6 +453,12 @@ class KeyerDialog(QDialog):
         self.line = _serial_combo(str(cfg.get("line_port", "")))
         self.wpm = QSpinBox(); self.wpm.setRange(10, 60); self.wpm.setValue(int(cfg.get("wpm", 28)))
         self.wpm.setSuffix(" wpm")
+        self.cut = QComboBox()
+        for key, label in K.CUT_STYLES.items():
+            self.cut.addItem(label, key)
+        self.cut.setCurrentIndex(max(0, self.cut.findData(cfg.get("cut", "nt"))))
+        self.cut_exch = QCheckBox("Also in the exchange (zone, serial number), not just the RST")
+        self.cut_exch.setChecked(bool(cfg.get("cut_exch")))
         self.lead = QSpinBox(); self.lead.setRange(0, 1000); self.lead.setSuffix(" ms")
         self.lead.setValue(int(cfg.get("ptt_lead_ms", 120)))
         self.tail = QSpinBox(); self.tail.setRange(0, 2000); self.tail.setSuffix(" ms")
@@ -464,6 +470,8 @@ class KeyerDialog(QDialog):
         f.addRow("CW", self.cw)
         f.addRow("Keying serial port", self.line)
         f.addRow("CW speed", self.wpm)
+        f.addRow("Cut numbers (CW)", self.cut)
+        f.addRow("", self.cut_exch)
         f.addRow("PTT before audio", self.lead)
         f.addRow("PTT after audio", self.tail)
         v.addLayout(f)
@@ -570,5 +578,6 @@ class KeyerDialog(QDialog):
         out.update(allow_tx=self.allow.isChecked(), mic=self.mic.currentData(),
                    radio_out=self.out.currentData(), ptt=self.ptt.currentData(), cw=self.cw.currentData(),
                    line_port=_serial_value(self.line), wpm=self.wpm.value(),
+                   cut=self.cut.currentData(), cut_exch=self.cut_exch.isChecked(),
                    ptt_lead_ms=self.lead.value(), ptt_tail_ms=self.tail.value())
         return out
