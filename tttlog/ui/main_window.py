@@ -24,16 +24,19 @@ from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, band_start_khz, mode_group, utc_now
 from ..core.netsync import LogSync
+from ..core.rig import from_logger_mode, to_logger_mode
 from ..export.adif import export_adif, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
-from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, NewLogDialog, WsjtxDialog,
+from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
+                      WsjtxDialog,
                       StationDialog)
 from .docks import Pane
 from .needed_pane import NeededPane
 from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
 from .rate_pane import RatePane
+from .rig_control import RigControl
 from .wsjtx_listener import WsjtxListener
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
@@ -71,6 +74,7 @@ class MainWindow(QMainWindow):
         self.colors = config.load_colors()
         self.net_cfg = config.load_network()
         self.wsjtx_cfg = config.load_wsjtx()
+        self.rig_cfg = config.load_rig()
         self.node_id = config.node_id()
         self.sync: LogSync | None = None
         self.cty_missing = not data_file("cty.dat").exists()
@@ -129,6 +133,8 @@ class MainWindow(QMainWindow):
             self.net.start(self.net_cfg)
         if self.wsjtx_cfg.get("enabled"):
             self.wsjtx.start(self.wsjtx_cfg)
+        if self.rig_cfg.get("enabled"):
+            self.rig.start(self.rig_cfg)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -142,7 +148,8 @@ class MainWindow(QMainWindow):
         for lbl in (self.radio_lbl, self.score_lbl):          # wrap rather than widen the window
             lbl.setWordWrap(True)
         self.wsjtx_lbl = QLabel(visible=False)
-        top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.wsjtx_lbl)
+        self.rig_lbl = QLabel(visible=False)
+        top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
         top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
         v.addLayout(top)
@@ -281,6 +288,12 @@ class MainWindow(QMainWindow):
         self.wsjtx.adifLogged.connect(self._on_wsjtx_logged)
         self.wsjtx.stateChanged.connect(self._on_wsjtx_state)
 
+        # Radio (CAT): follow the dial; tune it only if Config ▸ Radio allows
+        self.rig = RigControl(self)
+        self.rig.freqChanged.connect(self._on_rig_freq)
+        self.rig.modeChanged.connect(self._on_rig_mode)
+        self.rig.stateChanged.connect(self._on_rig_state)
+
     def _dock(self, title, widget, area, closable=True, scroll=True):
         d = Pane(title, widget, self, closable=closable, scroll=scroll)
         self.addDockWidget(area, d)
@@ -320,6 +333,7 @@ class MainWindow(QMainWindow):
         cfg.addAction(QAction("DX cluster…", self, triggered=self.edit_cluster))
         cfg.addAction(QAction("Local network…", self, triggered=self.edit_network))
         cfg.addAction(QAction("WSJT-X…", self, triggered=self.edit_wsjtx))
+        cfg.addAction(QAction("Radio…", self, triggered=self.edit_radio))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -631,10 +645,17 @@ class MainWindow(QMainWindow):
         self.tx_lbl.setText(f"TX F{n + 1}: {txt}" + (f"   [{wav}]" if wav and self.mode == "SSB" else ""))
 
     # ---------------------------------------------------------- radio
-    def set_freq(self, khz: float):
-        if band_from_khz(khz) is None:
-            self.banner(f"{khz} kHz is outside the ham bands", "#ffd166")
-            return
+    def set_freq(self, khz: float, from_rig: bool = False):
+        if not from_rig:
+            if band_from_khz(khz) is None:
+                self.banner(f"{khz} kHz is outside the ham bands", "#ffd166")
+                return
+            if self.rig.is_connected() and not self.rig.control:
+                # follow-only: the radio's dial is the truth, so don't log a frequency it isn't on
+                self.banner("Tune the radio (tttlog follows it). To let tttlog tune it: "
+                            "Config ▸ Radio ▸ Let tttlog tune the radio", "#ffd166")
+                return
+            self.rig.set_freq(khz)
         self.freq_khz = khz
         self.settings.setValue("freq_khz", khz)
         self.settings.setValue(f"band_freq/{band_from_khz(khz)}/{mode_group(self.mode)}", khz)
@@ -660,8 +681,10 @@ class MainWindow(QMainWindow):
         if ok:
             self.set_freq(khz)
 
-    def set_mode(self, mode):
+    def set_mode(self, mode, from_rig: bool = False):
         old = self.engine.default_rst(self.mode) if self.engine else "59"
+        if not from_rig:
+            self.rig.set_mode(from_logger_mode(mode, self.freq_khz))
         self.mode = mode
         if self.engine and self.rst.text().strip() in ("", old):   # 59 <-> 599 unless typed
             self.rst.setText(self.engine.default_rst(mode))
@@ -979,7 +1002,7 @@ class MainWindow(QMainWindow):
     def go_to_spot(self, s):
         """QSY to a spot and put the call in the entry line (S&P)."""
         if self.engine and s.mode in self.engine.rules.get("modes", []) and s.mode != self.mode:
-            self.mode = s.mode
+            self.set_mode(s.mode)
         self.run_mode = False
         self.set_freq(s.freq_khz)
         self.wipe()
@@ -1046,6 +1069,36 @@ class MainWindow(QMainWindow):
             self.wsjtx.start(self.wsjtx_cfg)
         else:
             self.wsjtx.stop()
+
+    # ---------------------------------------------------------- radio (CAT)
+    def edit_radio(self):
+        dlg = RadioDialog(self.rig_cfg, self.rig.state if self.rig_cfg.get("enabled") else "", self)
+        if not dlg.exec():
+            return
+        self.rig_cfg = dlg.values()
+        config.save_rig(self.rig_cfg)
+        if self.rig_cfg["enabled"]:
+            self.rig.start(self.rig_cfg)
+        else:
+            self.rig.stop()
+        self._refresh_radio()
+
+    def _on_rig_freq(self, khz: float):
+        if abs(khz - self.freq_khz) >= 0.001:
+            self.set_freq(khz, from_rig=True)
+
+    def _on_rig_mode(self, radio_mode: str):
+        modes = self.engine.rules["modes"] if self.engine else []
+        m = to_logger_mode(radio_mode, self.mode, modes)
+        if m and m != self.mode:
+            self.set_mode(m, from_rig=True)
+
+    def _on_rig_state(self, text: str):
+        self.rig_lbl.setVisible(text != "off")
+        ok = text.startswith("connected to")
+        self.rig_lbl.setText(("● " if ok else "○ ") + "Radio" + ("" if self.rig.control or not ok else " (follow)"))
+        self.rig_lbl.setStyleSheet(f"color: {'#2a9d4b' if ok else '#c77d00'}; font-weight: bold;")
+        self.rig_lbl.setToolTip(f"Radio: {text}  (Config ▸ Radio)")
 
     def _on_wsjtx_state(self, text: str):
         on = text != "off"
@@ -1332,6 +1385,7 @@ class MainWindow(QMainWindow):
         self.cluster.disconnect_from()
         self.net.stop()
         self.wsjtx.stop()
+        self.rig.stop()
         if self.log:
             self.log.close()
         super().closeEvent(ev)

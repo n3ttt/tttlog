@@ -185,6 +185,17 @@ The network name keeps separate groups apart; it isn't a password. Use it only o
 
 The **Bands** column on the left has a button for each band in the open log's contest; the lit one is the band you're on. Clicking a band takes you back to where you last were on it in the same kind of mode (CW, SSB, digital...), or the first time to a usual spot (for example 14025 CW, 14250 SSB, 14074 FT8). For now this sets tttlog's frequency; with radio control it will tune the radio.
 
+## Radio (CAT)
+
+Config ▸ Radio… connects to the radio:
+- **FlexRadio** through SmartSDR: on a Mac, SmartSDR for Mac's CAT port (Network, 127.0.0.1, port 5002); on Windows, a TCP port from SmartSDR CAT.
+- **Kenwood / Elecraft** (Kenwood command set), over the network or a serial/USB port.
+- **Yaesu** FTDX10 / FTDX101 / FT-710 / FT-991A over the radio's USB (Enhanced COM) port at its CAT RATE.
+
+tttlog follows the radio: the frequency, band button and mode track the dial, and every QSO is logged on the radio's real frequency. The top bar shows **● Radio** (green when the radio answers).
+
+By default tttlog **only reads** the radio and never changes it. In that mode, band buttons and typed frequencies are refused with a reminder to tune the radio, so a QSO can't be logged on a frequency the radio isn't on. Tick **Let tttlog tune the radio** to have band buttons, typed kHz, clicked spots and mode changes tune it. Digital modes show on the radio as DIGU / DATA-USB; tttlog keeps whichever of FT8 / FT4 you picked.
+
 ## WSJT-X (FT8 / FT4)
 
 tttlog can log the QSOs you log in WSJT-X (or JTDX / MSHV). It only listens; it doesn't control WSJT-X.
@@ -217,7 +228,7 @@ If the database is ever damaged, `Log.recover_from_journal()` rebuilds it.
 
 ## Roadmap
 
-- **M1 (Dec):** rig control (Hamlib rigctld + native Yaesu CAT for FTDX-10), voice keyer (WAV through the radio's USB audio + CAT PTT)
+- **M1 (Dec):** rig control — done: Flex (SmartSDR CAT), Kenwood/Elecraft, Yaesu CAT (FTDX10 still to try on the radio); still to do: voice keyer (WAV through the radio's USB audio + CAT PTT)
 - **M2 (Jan):** DX cluster + bandmap, N1MM-format UDP broadcast (World Radio League, etc.), online scoreboard posting
 - **M3 (Feb):** Windows/Linux builds, a full dry run
 - Later: SO2R, more contests
