@@ -122,6 +122,11 @@ class MainWindow(QMainWindow):
         last = self.settings.value("last_log")
         if last and Path(last).exists():
             self.open_log(Path(last))
+        from ..updater import running_under_rosetta
+        if running_under_rosetta():
+            self.banner("This is the Intel build of tttlog on an Apple Silicon Mac: install the "
+                        "Apple Silicon one (tttlog-…-macos-arm64.dmg) — it's faster, and macOS will "
+                        "stop running Intel apps", "orange")
         if self.cty_missing:
             self.banner("Country file missing or damaged: File ▸ Update country file  (using a small test file)", "orange")
         self._refresh_rates()

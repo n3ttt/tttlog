@@ -79,9 +79,28 @@ class Release:
     asset_name: str | None
 
 
+def _sysctl(name: str) -> str:
+    try:
+        return subprocess.run(["sysctl", "-n", name], capture_output=True, text=True,
+                              timeout=2).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def mac_is_apple_silicon() -> bool:
+    """True on an Apple Silicon Mac, even when this copy is the Intel build running
+    under Rosetta (where platform.machine() says x86_64)."""
+    return sys.platform == "darwin" and (platform.machine() == "arm64" or _sysctl("hw.optional.arm64") == "1")
+
+
+def running_under_rosetta() -> bool:
+    """The Intel build running on an Apple Silicon Mac."""
+    return sys.platform == "darwin" and _sysctl("sysctl.proc_translated") == "1"
+
+
 def platform_asset_suffix() -> str:
     if sys.platform == "darwin":
-        return "macos-arm64.dmg" if platform.machine() == "arm64" else "macos-x86_64.dmg"
+        return "macos-arm64.dmg" if mac_is_apple_silicon() else "macos-x86_64.dmg"
     if sys.platform.startswith("win"):
         return "windows.zip"
     return "linux-x86_64.tar.gz"

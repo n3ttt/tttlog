@@ -27,3 +27,15 @@ def test_pick_latest_includes_prereleases_and_matches_asset():
 
 def test_version_string():
     assert updater.version_string().startswith(__version__)
+
+
+def test_mac_asset_is_arm64_under_rosetta(monkeypatch):
+    """The Intel build under Rosetta must still update to the Apple Silicon build."""
+    from tttlog import updater
+    monkeypatch.setattr(updater.sys, "platform", "darwin")
+    monkeypatch.setattr(updater.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(updater, "_sysctl", lambda n: {"hw.optional.arm64": "1",
+                                                        "sysctl.proc_translated": "1"}.get(n, ""))
+    assert updater.platform_asset_suffix() == "macos-arm64.dmg" and updater.running_under_rosetta()
+    monkeypatch.setattr(updater, "_sysctl", lambda n: "")          # a real Intel Mac
+    assert updater.platform_asset_suffix() == "macos-x86_64.dmg" and not updater.running_under_rosetta()

@@ -87,6 +87,9 @@ def build_mac_dmg() -> int:
                    check=True)
     # Ad-hoc signature: required on Apple Silicon; not a Developer ID, so first launch needs
     # System Settings > Privacy & Security > Open Anyway (see README).
+    # A synced folder (iCloud Documents) tags files with Finder info that codesign rejects
+    # ("resource fork, Finder information, or similar detritus not allowed"): clear it first.
+    subprocess.run(["xattr", "-cr", str(app)], check=True)
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
     arch = "arm64" if platform.machine() == "arm64" else "x86_64"
     stage = ROOT / "build" / "dmg"
