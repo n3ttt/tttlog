@@ -82,10 +82,18 @@ class StationDialog(QDialog):
         self.addr = QLineEdit(" | ".join(st.address))
         self.club = QLineEdit(st.club)
         self.email = QLineEdit(st.email)
+        from ..core.privileges import CLASSES, normalize
+        self.lic = QComboBox()
+        self.lic.addItem("None (no band limits)", "")
+        for c in CLASSES:
+            self.lic.addItem(c, c)
+        self.lic.setCurrentIndex(max(0, self.lic.findData(normalize(st.license_class))))
+        self.lic.setToolTip("US license class: tttlog warns when you're outside its privileges, keeps "
+                            "band buttons inside them, and won't key the radio outside them")
         for lbl, w in [("Call", self.call), ("Operator", self.op), ("State/Prov", self.state),
                        ("CQ zone", self.zone), ("ITU zone", self.itu), ("Grid", self.grid),
                        ("Name", self.name), ("Address (use | between lines)", self.addr),
-                       ("Club", self.club), ("Email", self.email)]:
+                       ("Club", self.club), ("Email", self.email), ("US license class", self.lic)]:
             f.addRow(lbl, w)
         f.addRow(_buttons(self))
 
@@ -95,7 +103,8 @@ class StationDialog(QDialog):
                        itu_zone=self.itu.value(), grid=self.grid.text().upper().strip(),
                        name=self.name.text().strip(),
                        address=[a.strip() for a in self.addr.text().split("|") if a.strip()],
-                       club=self.club.text().strip(), email=self.email.text().strip())
+                       club=self.club.text().strip(), email=self.email.text().strip(),
+                       license_class=self.lic.currentData() or "")
 
 
 class NewLogDialog(QDialog):

@@ -24,6 +24,7 @@ from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, band_start_khz, mode_group, utc_now
 from ..core.netsync import LogSync
+from ..core import privileges
 from ..core.rig import from_logger_mode, to_logger_mode
 from ..export.adif import export_adif, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
@@ -251,6 +252,7 @@ class MainWindow(QMainWindow):
         # DX cluster: telnet client, Spots window (mults / Qs), Telnet window (raw text)
         self.cluster = ClusterClient(self)
         self.spots_pane = SpotsPane(self.colors)
+        self.spots_pane.privilege_check = self._spot_privilege
         self.spots_pane.spots.max_age = timedelta(minutes=int(self.cluster_cfg.get("max_age_min", 30)))
         self.telnet_pane = TelnetPane()
         self.cluster.line.connect(self._on_cluster_line)
@@ -340,6 +342,7 @@ class MainWindow(QMainWindow):
         op.addAction(QAction("Set frequency…", self, shortcut="Ctrl+F", triggered=self.ask_freq))
         op.addAction(QAction("Operator on (OPON)…", self, shortcut="Ctrl+Shift+O",
                              triggered=lambda: self.opon()))
+        op.addAction(QAction("Operator's license class…", self, triggered=self.ask_license_class))
         self.mode_menu = op.addMenu("Mode")
         self._build_mode_menu(["SSB", "CW"])
         op.addAction(QAction("Delete selected QSO", self, shortcut="Ctrl+D", triggered=self.delete_selected))
@@ -663,6 +666,10 @@ class MainWindow(QMainWindow):
         txt = config.expand(m.get("text", ""), self.station, self.call.text().strip().upper(),
                             exch, self.engine.default_rst(self.mode) if self.engine else "59")
         wav = m.get("wav", "")
+        why = self.privilege_problem()
+        if why and (self.mode in VOICE_MODES or self.mode == "CW"):
+            self.banner(f"Not sending: {why}", "#ff8080")
+            return
         if self.mode in VOICE_MODES:
             path = self.wav_path(wav) if wav else None
             if path is None or not path.exists():
@@ -756,6 +763,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue(f"band_freq/{band_from_khz(khz)}/{mode_group(self.mode)}", khz)
         self._refresh_radio()
         self._live_check(self.call.text().strip().upper())
+        self._check_privileges()
 
     def go_to_band(self, band: str):
         """Band button: back to where you last were on that band in this kind of
@@ -767,6 +775,13 @@ class MainWindow(QMainWindow):
             khz = None
         if khz is None or band_from_khz(khz) != band:
             khz = band_start_khz(band, self.mode)
+        if khz is not None and self.license_class:
+            fixed = privileges.inside(self.license_class, band, self.mode, khz)
+            if fixed is None:
+                self.banner(f"{self.license_class} class has no {self.mode} privileges on {band}", "#ff8080")
+                self.call.setFocus()
+                return
+            khz = fixed
         if khz is not None:
             self.set_freq(khz)
         self.call.setFocus()
@@ -784,6 +799,9 @@ class MainWindow(QMainWindow):
         if self.engine and self.rst.text().strip() in ("", old):   # 59 <-> 599 unless typed
             self.rst.setText(self.engine.default_rst(mode))
         self._refresh_radio()
+        self._check_privileges()
+        if self.license_class:
+            self._restrike_spots()
 
     def toggle_run(self):
         self.run_mode = not self.run_mode
@@ -878,9 +896,70 @@ class MainWindow(QMainWindow):
         self._refresh_radio()
         self._push_net_status()
         self._refresh_rates()
-        self.banner(f"Operator is now {op}")
+        msg = f"Operator is now {op}"
+        if self.station.license_class and self.settings.value(f"op_class/{op}") is None \
+                and op not in (self.station.call, self.station.operator):
+            msg += (f" · band limits use the station's {self.license_class} class until you set "
+                    f"{op}'s: Operating ▸ Operator's license class")
+        why = self.privilege_problem()
+        if why:
+            self.banner(f"⚠ {why} · {msg}", "#ff8080")
+            self._priv_warned = True
+        else:
+            self._check_privileges()
+            self.banner(msg)
+        self._restrike_spots()
         self.call.setFocus()
         return True
+
+    # ---------------------------------------------------------- license privileges
+    @property
+    def license_class(self) -> str:
+        """The current operator's US license class ('' = no band limits)."""
+        own = self.settings.value(f"op_class/{self.current_op}")
+        if own is not None:
+            return privileges.normalize(str(own))
+        return privileges.normalize(self.station.license_class)
+
+    def privilege_problem(self, khz: float | None = None, mode: str | None = None) -> str:
+        return privileges.check(self.license_class, self.freq_khz if khz is None else khz,
+                                self.mode if mode is None else mode)
+
+    def _check_privileges(self):
+        why = self.privilege_problem()
+        if why:
+            self.banner(f"⚠ {why}", "#ff8080")
+            self._priv_warned = True
+        elif getattr(self, "_priv_warned", False):
+            self._priv_warned = False
+            if self.banner_lbl.text().startswith(("⚠", "Not sending")):
+                self.banner("")
+
+    def _restrike_spots(self):
+        """Spots struck through depend on the license class (and the mode): redraw them."""
+        if hasattr(self, "spots_pane"):
+            self.spots_pane.refresh()
+
+    def _spot_privilege(self, s) -> str:
+        if not self.license_class:
+            return ""
+        mode = s.mode if s.mode else self.mode
+        return privileges.check(self.license_class, s.freq_khz, mode)
+
+    def ask_license_class(self):
+        op = self.current_op
+        items = ["None (no band limits)"] + privileges.CLASSES
+        cur = self.license_class
+        text, ok = QInputDialog.getItem(self, "License class", f"{op}'s US license class:", items,
+                                        items.index(cur) if cur in items else 0, False)
+        if ok:
+            self.set_license_class(op, "" if text.startswith("None") else text)
+
+    def set_license_class(self, op: str, cls: str):
+        self.settings.setValue(f"op_class/{op.upper()}", privileges.normalize(cls))
+        self.banner(f"{op}: {privileges.normalize(cls) or 'no'} band limits")
+        self._check_privileges()
+        self._restrike_spots()
 
     def edit_station(self):
         dlg = StationDialog(self.station, self)
@@ -894,6 +973,8 @@ class MainWindow(QMainWindow):
                 self._refresh_log()
             self._refresh_radio()
             self.spots_pane.set_filter(self.spots_pane.spot_filter, self._home())
+            self._check_privileges()
+            self._restrike_spots()
 
     def edit_macros(self):
         dlg = MacroDialog(self.macros, self)

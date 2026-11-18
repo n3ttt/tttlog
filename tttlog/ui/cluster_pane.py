@@ -167,6 +167,7 @@ class SpotsPane(QWidget):
         self.colors = colors
         self.spots = SpotList()
         self.current_band: str | None = None
+        self.privilege_check = None       # (spot) -> "" or why I can't transmit there
         self.spot_filter: dict = dict(DEFAULT_FILTER)
         self.home = Home(zone=0)
         self.auto_send_filter = False
@@ -368,10 +369,14 @@ class SpotsPane(QWidget):
             vals = [s.time_utc.strftime("%H%M"), f"{s.freq_khz:.1f}", s.call, s.country,
                     need, s.spotter, s.comment]
             bg = self.colors[STATUS_KEY.get(s.status, "spot_dupe")]["color"]
+            why = self.privilege_check(s) if self.privilege_check else ""
             for c, v in enumerate(vals):
                 it = QTableWidgetItem(v)
                 it.setBackground(QBrush(QColor(bg)))
                 it.setForeground(QBrush(QColor(text_color_for(bg))))
+                if why:                                    # can't transmit there: strike it through
+                    f = it.font(); f.setStrikeOut(True); it.setFont(f)
+                    it.setToolTip(why)
                 t.setItem(r, c, it)
         all_ = self.filtered_spots()
         n_mult = sum(1 for s in all_ if s.status == "MULT")

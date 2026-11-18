@@ -25,6 +25,7 @@ class Station:
     address: list[str] = field(default_factory=list)
     club: str = ""
     email: str = ""
+    license_class: str = ""    # US: Extra / Advanced / General / Technician / Novice; "" = no band limits
 
 
 def list_contests() -> list[dict]:

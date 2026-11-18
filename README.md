@@ -198,6 +198,16 @@ tttlog follows the radio: the frequency, band button and mode track the dial, an
 
 By default tttlog **only reads** the radio and never changes it. In that mode, band buttons and typed frequencies are refused with a reminder to tune the radio, so a QSO can't be logged on a frequency the radio isn't on. Tick **Let tttlog tune the radio** to have band buttons, typed kHz, clicked spots and mode changes tune it. Digital modes show on the radio as DIGU / DATA-USB; tttlog keeps whichever of FT8 / FT4 you picked.
 
+## US license privileges (band limits)
+
+Set **US license class** in Config ▸ Station profile (Extra, Advanced, General, Technician, Novice; leave it at None for no limits). tttlog then uses the FCC Part 97 privileges for that class, HF through 70 cm:
+- A red **⚠ Outside General privileges: 20m phone is 14225–14350 kHz** banner whenever the radio or tttlog is somewhere you can't transmit in the current mode. It counts the whole signal: LSB needs 3 kHz below the dial, USB and data 3 kHz above, so 3802 LSB is "too close to the edge" for a General.
+- **Band buttons** land inside your privileges (a General's 20m SSB button goes to 14226 at the lowest), and say so if the class has none for that mode on that band.
+- The **voice and CW keyer won't transmit** outside your privileges.
+- **Spots** you can't work are struck through, with the reason in the tooltip.
+
+In a multi-op, each operator can have their own class: after **OPON**, set it in Operating ▸ Operator's license class (remembered on this computer). An operator without one uses the station's class.
+
 ## Voice & CW keyer
 
 Config ▸ Voice & CW keyer… sets it up. Nothing is ever transmitted until you tick **Allow tttlog to transmit**.
@@ -233,7 +243,7 @@ Included: `GENERAL` (everyday log), `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-
 ## Your settings
 
 Settings live in `~/.tttlog/`:
-- `station.yaml`: call, state, zones, club, and Cabrillo header info (Config ▸ Station profile)
+- `station.yaml`: call, state, zones, club, US license class, and Cabrillo header info (Config ▸ Station profile)
 - `macros.yaml`: F-keys (Config ▸ Function-key macros). Besides the text fields, `{CLEAR}` wipes the entry line and `{SPOT}` spots the last QSO, so you can put Spot on any key.
 - `cluster.yaml`: DX cluster host, login, and options (Config ▸ DX cluster)
 - `colors.yaml`: colors and checkboxes for the Needed and Spots windows
