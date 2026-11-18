@@ -96,3 +96,54 @@ def test_layout_survives_restart(app, win, tmp_path, monkeypatch):
     w2.reset_layout(); _settle(app, 500)                    # View ▸ Reset to the default layout
     assert not w2.dock_telnet.minimized and w2.dock_telnet.isVisible()
     w2.close()
+
+
+def test_drop_a_popped_out_pane_where_you_want(app, win):
+    win.resize(790, 740); win.show(); _settle(app, 700)
+    tel, log = win.dock_telnet, win.dock_log
+
+    def drop_on(pane, fx, fy):
+        g = pane.geometry()
+        return win.mapToGlobal(g.topLeft() + type(g.topLeft())(int(g.width() * fx), int(g.height() * fy)))
+
+    tel.setFloating(True); _settle(app)
+    assert tel.drop_target(drop_on(log, 0.5, 0.5))[0] == "tab"
+    tel.drop_at(drop_on(log, 0.5, 0.95)); _settle(app)          # bottom edge of Log
+    assert not tel.isFloating()
+    assert abs(tel.x() - log.x()) <= 2 and tel.y() > log.y()   # under Log, same column
+    assert not win.tabifiedDockWidgets(tel)
+
+    tel.setFloating(True); _settle(app)
+    tel.drop_at(drop_on(log, 0.05, 0.5)); _settle(app)          # left edge of Log
+    assert tel.x() < log.x() and abs(tel.y() - log.y()) <= 2
+
+    tel.setFloating(True); _settle(app)
+    tel.drop_at(drop_on(log, 0.5, 0.5)); _settle(app)           # middle: a tab with Log
+    assert log in win.tabifiedDockWidgets(tel)
+
+    tel.setFloating(True); _settle(app)
+    assert tel.drop_at(win.mapToGlobal(win.rect().topLeft()) - type(win.pos())(50, 50)) is False
+    assert tel.isFloating()                                     # dropped off the window: stays out
+
+
+def test_drag_title_strip_to_dock(app, win):
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    win.resize(790, 740); win.show(); _settle(app, 700)
+    tel, log = win.dock_telnet, win.dock_log
+    tel.setFloating(True); _settle(app)
+    bar = tel.bar
+
+    def send(kind, gpos, buttons):
+        local = QPointF(bar.mapFromGlobal(gpos))
+        ev = QMouseEvent(kind, local, QPointF(gpos), Qt.LeftButton, buttons, Qt.NoModifier)
+        app.sendEvent(bar, ev)
+
+    start = bar.mapToGlobal(bar.rect().center())
+    target = win.mapToGlobal(log.geometry().center())
+    send(QEvent.MouseButtonPress, start, Qt.LeftButton)
+    send(QEvent.MouseMove, target, Qt.LeftButton)
+    assert tel._band.isVisible()                                # the drop preview shows
+    send(QEvent.MouseButtonRelease, target, Qt.NoButton)
+    _settle(app)
+    assert not tel.isFloating() and log in win.tabifiedDockWidgets(tel)

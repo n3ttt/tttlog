@@ -27,7 +27,8 @@ def _apply_display_size() -> None:
 
 def main() -> int:
     if "--version" in sys.argv:
-        print(f"tttlog {__version__}")
+        from .updater import display_version
+        print(f"tttlog {display_version()}")
         return 0
     _apply_display_size()
     app = QApplication(sys.argv)

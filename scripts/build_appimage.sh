@@ -7,6 +7,9 @@
 set -e
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VER="$(python3 -c "import re,sys; print(re.search(r'__version__ = \"(.+?)\"', open(sys.argv[1]).read()).group(1))" "$ROOT/tttlog/__init__.py")"
+# with the build number build_app.py stamped in tttlog/_build.py: 0.1.0a3-b57
+BUILD="$(python3 -c "import re,sys; m=re.search(r'BUILD = \"(.+?)\"', open(sys.argv[1]).read()); print(m.group(1) if m else '')" "$ROOT/tttlog/_build.py" 2>/dev/null || true)"
+[ -n "$BUILD" ] && VER="$VER-b$BUILD"
 ARCH="$(uname -m)"
 TOOL="${APPIMAGETOOL:-appimagetool}"
 APPDIR="$ROOT/build/AppDir"

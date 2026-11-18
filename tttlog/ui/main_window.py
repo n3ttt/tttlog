@@ -68,7 +68,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._bridge = _Bridge()
         self._bridge.done.connect(lambda cb, res: cb(res))
-        self.setWindowTitle(f"tttlog {__version__}")
+        self.setWindowTitle(f"tttlog {updater.display_version()}")
         self.resize(1100, 720)
         self.setStyleSheet(STYLE)
         self.settings = QSettings("N3TTT", "tttlog")
@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         self.qsos = self.engine.rescore(self.log.all())
         self.needed_pane.set_engine(self.engine)
         self.settings.setValue("last_log", str(path))
-        self.setWindowTitle(f"tttlog {__version__} — {rules['name']} — {path.name}")
+        self.setWindowTitle(f"tttlog {updater.display_version()} — {rules['name']} — {path.name}")
         self._refresh_radio()
         self._refresh_log()
         self.call.setFocus()
@@ -1561,11 +1561,11 @@ class MainWindow(QMainWindow):
             if not updater.is_newer(rel.version):
                 if not quiet:
                     QMessageBox.information(self, "Check for updates",
-                                            f"You're up to date: tttlog {__version__}.")
+                                            f"You're up to date: tttlog {updater.display_version()}.")
                 return
             box = QMessageBox(self)
             box.setWindowTitle("Update available")
-            box.setText(f"<b>tttlog {rel.version}</b> is available. You have {__version__}.")
+            box.setText(f"<b>tttlog {rel.version}</b> is available. You have {updater.display_version()}.")
             notes = rel.notes.strip()
             box.setInformativeText(notes[:900] + ("…" if len(notes) > 900 else ""))
             go = box.addButton("Update now", QMessageBox.AcceptRole)

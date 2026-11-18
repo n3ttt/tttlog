@@ -8,9 +8,9 @@ other window. The ⇲ button (or double-clicking the title bar) docks it again.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
 from PySide6.QtWidgets import (QDockWidget, QFrame, QHBoxLayout, QLabel, QMainWindow, QScrollArea,
-                               QSizePolicy, QToolButton, QWidget)
+                               QRubberBand, QSizePolicy, QToolButton, QWidget)
 
 QWIDGETSIZE_MAX = (1 << 24) - 1
 
@@ -67,11 +67,35 @@ class PaneTitleBar(QWidget):
                                   else "Pop out into its own window")
         # popped-out panes use the system minimize button instead
         self.min_btn.setVisible(not floating)
+        self.setToolTip("Drag here and drop on the main window to dock it there "
+                        "(beside a pane, on top of one as a tab, or at a column edge)" if floating else "")
         self.min_btn.setText("+" if self.dock.minimized else "–")
         self.min_btn.setToolTip("Restore" if self.dock.minimized else "Minimize (roll up to the title bar)")
 
     def mouseDoubleClickEvent(self, ev):
         self.dock.toggle_floating()
+
+    # -- popped out: drag by this strip, drop on the main window to dock there ------
+    def mousePressEvent(self, ev):
+        if self.dock.isFloating() and ev.button() == Qt.LeftButton:
+            self._drag_from = ev.globalPosition().toPoint() - self.dock.frameGeometry().topLeft()
+            ev.accept(); return
+        super().mousePressEvent(ev)
+
+    def mouseMoveEvent(self, ev):
+        if self.dock.isFloating() and getattr(self, "_drag_from", None) is not None:
+            p = ev.globalPosition().toPoint()
+            self.dock.move(p - self._drag_from)
+            self.dock.show_drop_preview(p)
+            ev.accept(); return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        if self.dock.isFloating() and getattr(self, "_drag_from", None) is not None:
+            self._drag_from = None
+            self.dock.drop_at(ev.globalPosition().toPoint())
+            ev.accept(); return
+        super().mouseReleaseEvent(ev)
 
 
 # Smallest a pane may be squeezed to. Below what its contents need, it
@@ -164,6 +188,86 @@ class Pane(QDockWidget):
             back = [d for d in heights if d in _docked(mw) and not getattr(d, "minimized", False)
                     and d.geometry().left() < mine.right() and mine.left() < d.geometry().right()]  # my column
             mw.resizeDocks(back, [heights[d] for d in back], Qt.Vertical)
+
+    # -- drop a popped-out pane onto the main window ------------------------------
+    def _main(self):
+        p = self.parentWidget()
+        return p if isinstance(p, QMainWindow) else None
+
+    def drop_target(self, gpos):
+        """Where dropping at gpos (global) would dock: (kind, other pane or area, rect in
+        main-window coordinates) or None. kind: left/right/top/bottom (beside a pane),
+        tab (on top of a pane, as a tab), area (a column edge in the empty space)."""
+        mw = self._main()
+        if mw is None:
+            return None
+        pos = mw.mapFromGlobal(gpos)
+        if not mw.rect().contains(pos):
+            return None
+        for d in _docked(mw):
+            if d is self:
+                continue
+            g = d.geometry()
+            if not g.contains(pos):
+                continue
+            fx = (pos.x() - g.left()) / max(1, g.width())
+            fy = (pos.y() - g.top()) / max(1, g.height())
+            edge = min((fx, "left"), (1 - fx, "right"), (fy, "top"), (1 - fy, "bottom"))
+            if edge[0] > 0.25:                              # the middle: stack as a tab
+                return "tab", d, g
+            r = QRect(g)
+            if edge[1] == "left":
+                r.setWidth(g.width() // 2)
+            elif edge[1] == "right":
+                r.setLeft(g.left() + g.width() // 2)
+            elif edge[1] == "top":
+                r.setHeight(g.height() // 2)
+            else:
+                r.setTop(g.top() + g.height() // 2)
+            return edge[1], d, r
+        # not over a pane: the empty space -> the nearer side's column
+        left = pos.x() < mw.width() // 2
+        area = Qt.LeftDockWidgetArea if left else Qt.RightDockWidgetArea
+        r = QRect(0, 0, 120, mw.height()) if left else QRect(mw.width() - 120, 0, 120, mw.height())
+        return "area", area, r
+
+    def show_drop_preview(self, gpos):
+        mw = self._main()
+        if mw is None:
+            return
+        if getattr(self, "_band", None) is None:
+            self._band = QRubberBand(QRubberBand.Rectangle, mw)
+        t = self.drop_target(gpos)
+        if t is None:
+            self._band.hide()
+        else:
+            self._band.setGeometry(t[2]); self._band.show(); self._band.raise_()
+
+    def drop_at(self, gpos) -> bool:
+        """Dock where it was dropped (False: not over the main window, stay popped out)."""
+        if getattr(self, "_band", None) is not None:
+            self._band.hide()
+        mw = self._main()
+        t = self.drop_target(gpos)
+        if mw is None or t is None:
+            return False
+        kind, other, _r = t
+        # Dock straight into the target's column: setFloating(False) would first put it
+        # back in its old spot (e.g. its old tab group), and Qt won't always move it on.
+        mw.addDockWidget(other if kind == "area" else mw.dockWidgetArea(other), self)
+        if self.isFloating():
+            self.setFloating(False)
+        if kind == "tab":
+            mw.tabifyDockWidget(other, self)
+            self.raise_()
+        elif kind == "area":
+            pass                                          # already at that column's edge
+        else:
+            orient = Qt.Horizontal if kind in ("left", "right") else Qt.Vertical
+            mw.splitDockWidget(other, self, orient)       # self after other (right / below)
+            if kind in ("left", "top"):
+                mw.splitDockWidget(self, other, orient)   # ...then other after self
+        return True
 
     # -- pop out / dock back ---------------------------------------------------
     def toggle_floating(self):

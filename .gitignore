@@ -11,3 +11,4 @@ dist/
 data/cty.dat
 data/MASTER.SCP
 .DS_Store
+tttlog/_build.py

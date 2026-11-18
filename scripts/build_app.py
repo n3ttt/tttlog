@@ -32,7 +32,35 @@ def version() -> str:
     return ns["__version__"]
 
 
+def build_number() -> str:
+    """Number of commits so far: the same on every platform, up by one each commit.
+    (CI checks out the full history for this; TTTLOG_BUILD overrides it.)"""
+    if os.environ.get("TTTLOG_BUILD"):
+        return os.environ["TTTLOG_BUILD"]
+    try:
+        return subprocess.check_output(["git", "rev-list", "--count", "HEAD"], cwd=ROOT, text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "0"
+
+
+def stamp_build() -> str:
+    """Write tttlog/_build.py (not in git) so the built app knows its build number."""
+    b = build_number()
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        commit = ""
+    (ROOT / "tttlog" / "_build.py").write_text(f'BUILD = "{b}"\nCOMMIT = "{commit}"\n')
+    return b
+
+
+def file_version() -> str:
+    """'0.1.0a3-b57': what goes in the download's file name."""
+    return f"{version()}-b{build_number()}"
+
+
 def main() -> int:
+    stamp_build()
     cty = ROOT / "data" / "cty.dat"
     if not cty.exists():
         print("data/cty.dat missing: run  python scripts/update_cty.py  first", file=sys.stderr)
@@ -56,7 +84,7 @@ def main() -> int:
            "--exclude-module", "PySide6.QtWebEngineCore", "--exclude-module", "PySide6.QtWebEngineWidgets",
            "--exclude-module", "PySide6.QtQml", "--exclude-module", "PySide6.QtQuick",
            "--exclude-module", "PySide6.Qt3DCore", "--exclude-module", "PySide6.QtPdf",
-           "--exclude-module", "tkinter"]
+           "--exclude-module", "tkinter", "--hidden-import", "tttlog._build"]
     if os.name == "nt" or sys.platform == "darwin":
         cmd.append("--windowed")              # no console window behind the app
     for src, dest in data:
@@ -70,7 +98,7 @@ def main() -> int:
     folder = ROOT / "dist" / "tttlog"
     (folder / "README-FIRST.txt").write_text((ROOT / "docs" / "TESTERS.md").read_text(encoding="utf-8"),
                                              encoding="utf-8")
-    zip_base = ROOT / "dist" / f"tttlog-{version()}-{plat}"
+    zip_base = ROOT / "dist" / f"tttlog-{file_version()}-{plat}"
     fmt = "gztar" if plat == "linux" else "zip"
     out = shutil.make_archive(str(zip_base), fmt, root_dir=folder.parent, base_dir=folder.name)
     print(f"Built {folder}\nArchive {out}")
@@ -82,8 +110,8 @@ def build_mac_dmg() -> int:
     ver = version()
     app = ROOT / "dist" / "tttlog.app"
     plist = app / "Contents" / "Info.plist"
-    for key in ("CFBundleShortVersionString", "CFBundleVersion"):
-        subprocess.run(["plutil", "-replace", key, "-string", ver, str(plist)], check=True)
+    subprocess.run(["plutil", "-replace", "CFBundleShortVersionString", "-string", ver, str(plist)], check=True)
+    subprocess.run(["plutil", "-replace", "CFBundleVersion", "-string", build_number(), str(plist)], check=True)
     subprocess.run(["plutil", "-replace", "CFBundleIdentifier", "-string", "com.n3ttt.tttlog", str(plist)],
                    check=True)
     # Recording voice-keyer messages: without this macOS refuses (or kills the app on) mic access.
@@ -104,7 +132,7 @@ def build_mac_dmg() -> int:
     (stage / "Applications").symlink_to("/Applications")
     (stage / "README-FIRST.txt").write_text((ROOT / "docs" / "TESTERS-MAC.md").read_text(encoding="utf-8"),
                                             encoding="utf-8")
-    dmg = ROOT / "dist" / f"tttlog-{ver}-macos-{arch}.dmg"
+    dmg = ROOT / "dist" / f"tttlog-{file_version()}-macos-{arch}.dmg"
     dmg.unlink(missing_ok=True)
     # hdiutil sometimes fails with "Resource busy" on CI runners while something else briefly
     # holds the disk; it works on a retry.

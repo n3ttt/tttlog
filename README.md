@@ -14,7 +14,7 @@ Keyboard-first, with contest rules kept in files, and built so you never lose a 
 
 ## Version & updates
 
-- **Help ▸ About tttlog** shows the version (and the git commit when running from source). `tttlog --version` prints it too.
+- **Help ▸ About tttlog** shows the version and build number (and the git commit when running from source), e.g. `0.1.0a3 build 45`. `tttlog --version` prints it too. The build number is the number of commits, so it goes up with every change and is the same on Mac, Windows and Linux; download names carry it too (`tttlog-0.1.0a3-b45-windows.zip`). The version (0.1.0a3) changes only for a release, and that's what the updater compares.
 - tttlog checks GitHub once a day. **Help ▸ Check for updates…** checks right away.
   - **Mac app:** **Update now** downloads the new DMG, replaces the app, and reopens it.
   - **From source (git clone):** does `git pull` + reinstall, then offers to restart.
@@ -46,10 +46,10 @@ Optional: put a `MASTER.SCP` file in `data/` to get Super Check Partial suggesti
 
 ## Alpha testers (no Python needed)
 
-Every pull request and push to `main` builds a Windows zip on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts ▸ `tttlog-<version>-windows.zip`, one zip to extract). Released versions are on the [Releases](https://github.com/n3ttt/tttlog/releases) page.
+Every pull request and push to `main` builds a Windows zip on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts ▸ `tttlog-<version>-b<build>-windows.zip`, one zip to extract). Released versions are on the [Releases](https://github.com/n3ttt/tttlog/releases) page.
 Testers unzip it and double-click `tttlog.exe`. The zip includes `README-FIRST.txt` ([docs/TESTERS.md](docs/TESTERS.md)) with first-run steps and how to report bugs.
 To build one yourself on Windows: `pip install pyinstaller`, `python scripts/update_cty.py`, then `python scripts/build_app.py`. The zip lands in `dist/`.
-Linux works the same way (Actions ▸ "Linux build" ▸ Artifacts ▸ `tttlog-<version>-linux-x86_64.tar.gz`): a `.tar.gz` with one `tttlog-<version>-x86_64.AppImage` (the whole program in one file) and `install-linux.sh`, which adds it to the applications menu without root. Instructions: [docs/TESTERS-LINUX.md](docs/TESTERS-LINUX.md).
+Linux works the same way (Actions ▸ "Linux build" ▸ Artifacts ▸ `tttlog-<version>-b<build>-linux-x86_64.tar.gz`): a `.tar.gz` with one `tttlog-<version>-x86_64.AppImage` (the whole program in one file) and `install-linux.sh`, which adds it to the applications menu without root. Instructions: [docs/TESTERS-LINUX.md](docs/TESTERS-LINUX.md).
 To build it on Linux: `python scripts/build_app.py`, then `APPIMAGETOOL=/path/to/appimagetool sh scripts/build_appimage.sh`.
 The same `build_app.py` builds a macOS version on a Mac.
 
@@ -89,7 +89,7 @@ The banner under the entry line goes red for a **DUPE**, green for a **NEW MULT*
 Log, Score, Check Partial, Rate, Needed, Spots, and Telnet are panes. Each title bar has three buttons:
 
 - **–** minimizes the pane: it rolls up to just its title bar. Click **+** to bring it back.
-- **⧉** pops the pane out into its own window, which has the normal minimize, zoom, and close buttons. **⇲** (or double-clicking the title bar) docks it back.
+- **⧉** pops the pane out into its own window, which has the normal minimize, zoom, and close buttons. **⇲** (or double-clicking the title bar) docks it back where it was. To dock it somewhere else, drag it by tttlog's title strip (the bar with ⇲, not the system title bar) and drop it on the main window: near a pane's edge to go beside or above/below it, in its middle to stack as a tab, or on the empty space to go at that column's edge. A shaded box shows where it will land; dropped off the window, it stays popped out.
 - **×** closes it. Reopen it from the View menu.
 
 View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once. You can also drag panes to rearrange them or stack them as tabs. The layout is remembered.

@@ -59,14 +59,37 @@ def git_commit() -> str:
         return ""
 
 
+def build_number() -> str:
+    """Goes up with every commit: the number of commits in the history. A built app
+    has it stamped in tttlog/_build.py (scripts/build_app.py); from source, ask git."""
+    try:
+        from . import _build
+        return str(_build.BUILD)
+    except ImportError:
+        pass
+    if not IS_GIT_CHECKOUT:
+        return ""
+    try:
+        return subprocess.check_output(["git", "-C", str(SOURCE_ROOT), "rev-list", "--count", "HEAD"],
+                                       text=True, stderr=subprocess.DEVNULL).strip()
+    except Exception:
+        return ""
+
+
+def display_version() -> str:
+    """'0.1.0a3 build 57' (the release version, plus the build number when known)."""
+    b = build_number()
+    return f"{__version__} build {b}" if b else __version__
+
+
 def version_string() -> str:
-    """'0.1.0a3 (Mac app)' / '0.1.0a3 (source, abc1234)'."""
+    """'0.1.0a3 build 57 (Mac app)' / '0.1.0a3 build 57 (source, abc1234)'."""
     if FROZEN:
         kind = {"darwin": "Mac app", "win32": "Windows app"}.get(sys.platform, "Linux app")
     else:
         c = git_commit()
         kind = f"source, {c}" if c else "source"
-    return f"{__version__} ({kind})"
+    return f"{display_version()} ({kind})"
 
 
 # ------------------------------------------------------------------ releases

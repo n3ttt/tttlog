@@ -19,6 +19,8 @@ jobs:
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0      # full history: the build number is the commit count
 
       - uses: actions/setup-python@v7
         with:
