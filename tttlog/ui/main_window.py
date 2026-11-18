@@ -34,6 +34,7 @@ from .dialogs import (ClusterButtonsDialog, ClusterDialog, EditQsoDialog, FKeyDi
                       StationDialog)
 from .docks import GridCanvas, Pane
 from .needed_pane import NeededPane
+from .needed_spots_pane import NeededSpotsPane
 from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
 from .rate_pane import RatePane
@@ -59,9 +60,9 @@ DEFAULT_GRID = {
     "Bands": (0, 0, 3, 28), "Entry": (3, 0, 29, 10), "Log": (3, 10, 12, 18),
     "Spots": (15, 10, 17, 12), "Telnet": (15, 22, 17, 6), "Score": (32, 0, 16, 9),
     "Check Partial": (32, 9, 16, 5), "Rate": (32, 14, 16, 8), "Needed": (32, 22, 16, 6),
-    "Network": (32, 28, 16, 6),
+    "Network": (32, 28, 16, 6), "Needed Spots": (15, 28, 17, 8),
 }
-DEFAULT_MINIMIZED = ("Network",)
+DEFAULT_MINIMIZED = ("Network", "Needed Spots")
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 OP_RE = re.compile(r"^[A-Z0-9]{3,}(/[A-Z0-9]+)*$")
 
@@ -324,6 +325,12 @@ class MainWindow(QMainWindow):
         self.needed_pane.colorsChanged.connect(self._save_colors)
         self._dock("Needed", self.needed_pane)
 
+        # Needed Spots: spotted mults and unworked calls, filterable
+        self.needed_spots_pane = NeededSpotsPane(self.colors)
+        self.needed_spots_pane.privilege_check = self._spot_privilege
+        self.needed_spots_pane.spotActivated.connect(lambda s: (self.go_to_spot(s), self.call.setFocus()))
+        self._dock("Needed Spots", self.needed_spots_pane)
+
         # Local network: share the log with other tttlog stations
         self.net = NetNode(self.node_id, self)
         self.network_pane = NetworkPane()
@@ -417,7 +424,12 @@ class MainWindow(QMainWindow):
                                         toggled=self._set_auto_spot)
         cl.addAction(self.auto_spot_action)
         cl.addSeparator()
-        cl.addAction(self._shortcut_action("go_needed", "Go to newest needed spot", self.go_to_next_needed))
+        cl.addAction(self._shortcut_action("go_needed", "Go to the next needed spot (press again for the next)",
+                                           self.go_to_next_needed))
+        self.chase_band_act = QAction("Needed mults: only the band I'm on", self, checkable=True,
+                                      checked=bool(self.cluster_cfg.get("chase_band_only")),
+                                      toggled=self.set_chase_band_only)
+        cl.addAction(self.chase_band_act)
         cl.addAction(QAction("Search spots", self, shortcut="Ctrl+Shift+F",
                              triggered=self._focus_spot_search))
         cl.addSeparator()
@@ -549,6 +561,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "spots_pane") and self.spots_pane.current_band != band:
             self.spots_pane.current_band = band
             self.spots_pane.refresh()
+            self._refresh_needed()
+            self._filter_alerts()
 
     def _load_scp(self) -> list[str]:
         p = data_file("MASTER.SCP")
@@ -597,6 +611,7 @@ class MainWindow(QMainWindow):
         self.net.set_log(self.sync, cid)
         self.qsos = self.engine.rescore(self.log.all())
         self.needed_pane.set_engine(self.engine)
+        self.needed_spots_pane.set_engine(self.engine)
         self.settings.setValue("last_log", str(path))
         self.setWindowTitle(f"tttlog {updater.display_version()} — {rules['name']} — {path.name}")
         self._refresh_radio()
@@ -938,6 +953,8 @@ class MainWindow(QMainWindow):
         if not spot_passes(s, self.spots_pane.spot_filter, self.spots_pane.home) or self._spot_privilege(s):
             return
         key = (s.call, s.band)
+        if self.cluster_cfg.get("chase_band_only") and s.band != band_from_khz(self.freq_khz):
+            return
         last = self._alerted.get(key)
         if last is not None and (s.time_utc - last).total_seconds() < 600:
             return
@@ -957,6 +974,17 @@ class MainWindow(QMainWindow):
         while self.alerts.count() > 30:
             self.alerts.takeItem(self.alerts.count() - 1)
         self._refresh_alert_hint()
+
+    def _filter_alerts(self):
+        """With 'only the band I'm on', hide messages for other bands (they come back)."""
+        if not hasattr(self, "alerts"):
+            return
+        band_only = bool(self.cluster_cfg.get("chase_band_only"))
+        band = band_from_khz(self.freq_khz)
+        for i in range(self.alerts.count()):
+            it = self.alerts.item(i)
+            sp = it.data(Qt.UserRole)
+            it.setHidden(band_only and sp is not None and sp.band != band)
 
     def _on_alert_clicked(self, item):
         s = item.data(Qt.UserRole)
@@ -1175,6 +1203,7 @@ class MainWindow(QMainWindow):
             if self.engine:
                 self.engine = ContestEngine(self.engine.rules, self.cty, self.station)
                 self.needed_pane.set_engine(self.engine)
+                self.needed_spots_pane.set_engine(self.engine)
                 self.qsos = self.engine.rescore(self.qsos)
                 self._refresh_log()
             self._refresh_radio()
@@ -1460,17 +1489,44 @@ class MainWindow(QMainWindow):
         self.call.setText(s.call)
         self._on_call_edited(s.call)
 
+    def chase_list(self) -> list:
+        """Needed spots in jump order: mults (newest first), then new Qs if there are no
+        mults. Only the band you're on when that's set; never ones you can't transmit on."""
+        band_only = bool(self.cluster_cfg.get("chase_band_only")) or self.spots_pane.band_box.currentIndex() == 1
+        band = band_from_khz(self.freq_khz)
+        spots = [s for s in self.spots_pane.filtered_spots()
+                 if not (band_only and s.band != band) and not self._spot_privilege(s)]
+        mults = [s for s in spots if s.status == "MULT"]
+        return mults or [s for s in spots if s.status == "Q"]
+
     def go_to_next_needed(self):
-        """Jump to the newest mult spot, or the newest needed Q if no mults."""
-        spots = [s for s in self.spots_pane.spots.spots()
-                 if not (self.spots_pane.band_box.currentIndex() == 1
-                         and s.band != self.spots_pane.current_band)]
-        pick = next((s for s in spots if s.status == "MULT"), None) or \
-            next((s for s in spots if s.status == "Q"), None)
-        if pick:
-            self.go_to_spot(pick)
-        else:
-            self.banner("No needed spots in the current filter")
+        """Ctrl+G: the newest needed spot; pressed again while still on it, the next one
+        (wrapping around), so you can step through them all."""
+        spots = self.chase_list()
+        if not spots:
+            where = " on this band" if self.cluster_cfg.get("chase_band_only") else ""
+            self.banner(f"No needed spots{where} in the current filter")
+            return
+        keys = [(s.call, s.band) for s in spots]
+        last = getattr(self, "_chase_last", None)        # (call, band, kHz) we jumped to last
+        i = 0
+        if last and (last[0], last[1]) in keys and abs(self.freq_khz - last[2]) < 0.05:
+            i = (keys.index((last[0], last[1])) + 1) % len(keys)
+        s = spots[i]
+        self._chase_last = (s.call, s.band, s.freq_khz)
+        self.go_to_spot(s)
+        if len(spots) > 1:
+            self.banner(f"{i + 1} of {len(spots)}: {s.call} {s.freq_khz:,.1f} · {self._key('go_needed')} next · "
+                        f"{self._key('swap_run')} back to run")
+
+    def set_chase_band_only(self, on: bool):
+        self.cluster_cfg["chase_band_only"] = bool(on)
+        config.save_cluster(self.cluster_cfg)
+        if self.chase_band_act.isChecked() != bool(on):
+            self.chase_band_act.blockSignals(True); self.chase_band_act.setChecked(bool(on))
+            self.chase_band_act.blockSignals(False)
+        self._filter_alerts()
+        self.banner("Needed mults: only the band you're on" if on else "Needed mults: all bands")
 
     def _focus_spot_search(self):
         if not self.dock_spots.shown:
@@ -1489,7 +1545,10 @@ class MainWindow(QMainWindow):
                 self.cluster_connect(True)
 
     def _refresh_needed(self):
-        self.needed_pane.update_data(self.qsos, self.spots_pane.filtered_spots())
+        spots = self.spots_pane.filtered_spots()
+        self.needed_pane.update_data(self.qsos, spots)
+        if hasattr(self, "needed_spots_pane"):
+            self.needed_spots_pane.update_spots(spots, band_from_khz(self.freq_khz))
 
     def _save_colors(self):
         config.save_colors(self.colors)
@@ -1654,6 +1713,7 @@ class MainWindow(QMainWindow):
         if self.engine:
             self.engine = ContestEngine(self.engine.rules, self.cty, self.station)
             self.needed_pane.set_engine(self.engine)
+            self.needed_spots_pane.set_engine(self.engine)
             self.qsos = self.engine.rescore(self.qsos)
             self._refresh_log()
         self.spots_pane.spots._spotter_cache.clear()

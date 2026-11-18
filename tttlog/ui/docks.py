@@ -614,6 +614,11 @@ class GridCanvas(QWidget):
             if item.get("min"):
                 p.minimized = True
                 p.body.setVisible(False); p.grip.setVisible(False); p.bar.sync()
+        new = [p for name, p in self.panes.items() if name not in data]
+        for p in new:                                # a pane added since this layout was saved:
+            if not p.floating:                       # rolled up, out of the way of what's there
+                p.minimized = True
+                p.body.setVisible(False); p.grip.setVisible(False); p.bar.sync()
         for name, p in self.panes.items():
             item = data.get(name) or {}
             if item.get("float") and p.shown:
@@ -621,3 +626,5 @@ class GridCanvas(QWidget):
                 p._float_geo = QRect(fx, fy, fw, fh)
                 p.setFloating(True)
         self.relayout()
+        for p in new:
+            self.place(p, p.grid)
