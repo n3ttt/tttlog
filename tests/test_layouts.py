@@ -37,8 +37,12 @@ def _arrange(app, win):
     # The fake test screen is only 800 px wide. With Windows' and Linux's bigger fonts the
     # panes' minimum widths don't fit this layout at all (the Entry pane alone needs ~626 px
     # on Windows), so Qt can't build it and there's nothing meaningful to compare.
-    fits = (abs(win.dock_log.width() - 150) <= 2 and abs(win.dock_spots.width() - 250) <= 2
-            and win.dock_entry.minimumSizeHint().width() <= win.dock_log.width() + win.dock_spots.width() + 8)
+    _skip_unless_fits(win, 150, 250)
+
+
+def _skip_unless_fits(win, log_w, spots_w):
+    fits = (abs(win.dock_log.width() - log_w) <= 2 and abs(win.dock_spots.width() - spots_w) <= 2
+            and win.dock_entry.minimumSizeHint().width() <= log_w + spots_w + 8)
     if not fits:
         import pytest
         pytest.skip("this platform's minimum pane sizes don't fit the 800 px test screen")
@@ -64,8 +68,9 @@ def test_layout_per_operator(app, win):
     mine = _geo(win)
     win.opon("K3ABC")                                       # first time: keeps the current layout
     assert "window layout" not in win.banner_lbl.text()
-    win.dock_telnet.set_minimized(False)
+    win.dock_telnet.set_minimized(False); _settle(app)        # let the restore finish first
     win.resizeDocks([win.dock_log, win.dock_spots], [260, 140], Qt.Horizontal); _settle(app)
+    _skip_unless_fits(win, 260, 140)
     theirs = _geo(win)
     assert any(abs(x - y) > 50 for n in NAMES for x, y in zip(theirs[n], mine[n]))   # really different
 
