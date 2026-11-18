@@ -62,6 +62,7 @@ The same `build_app.py` builds a macOS version on a Mac.
 | Type `14250` in Call → Enter | Change frequency (until rig control lands) |
 | **F1–F12** | Macros; the set changes with mode (SSB/CW) and Run/S&P. SSB plays the key's recording, CW sends the text (see Voice & CW keyer) |
 | **Ctrl+Shift+F1–F12** | Record that key's voice message (press again or Esc to stop) |
+| Right-click an F-key button | Edit that key (label, text, voice file), record or play its message, or edit all keys |
 | **PgUp / PgDn** | CW speed ±2 wpm |
 | **Ctrl+R** | Toggle Run / S&P |
 | **Ctrl+F** | Set frequency |
@@ -106,7 +107,9 @@ If the link drops, tttlog reconnects every 30 seconds.
 The cluster has two windows:
 
 - **Spots**: the stations you can work. Tick which kinds to show (**Mults**, **Qs**, **Dupes / can't work**) and click a swatch to pick its color.
-- **Telnet**: the raw cluster text, the Connect button, and a box for typing cluster commands. You can close or minimize it; the connection keeps running and Spots keeps filling.
+- **Telnet**: the raw cluster text, the Connect button, a box for typing cluster commands (↑ / ↓ bring back earlier ones), and 12 command buttons across the bottom, as in N1MM. You can close or minimize it; the connection keeps running and Spots keeps filling.
+
+**Command buttons:** SH/DX (last 30), DX of call, WWV, Sun, Filter?, Users, Skimmer on / off, Heading, QRZ, Reconnect, Bye. Right-click a button (or the cluster text) to edit them or hide them. Each button has a label and a command; in the command, `{MYCALL}` is your call, `{CALL}` the call in the entry line (or your last QSO's), `{FREQ}` your frequency in kHz, and `{CONN}` reconnects. Put `|` between commands to send several from one button (`SH/DX 30 | SH/WWV`). Commands differ a little between cluster programs (AR-Cluster, CC Cluster, DXSpider), so change any your cluster doesn't know. The buttons are saved in `cluster.yaml`.
 
 Each spot is checked against your log and the contest rules:
 

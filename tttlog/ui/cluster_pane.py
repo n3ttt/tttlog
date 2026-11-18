@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QBrush, QColor
 from PySide6.QtNetwork import QAbstractSocket, QTcpSocket
-from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QHBoxLayout, QHeaderView, QInputDialog,
+from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog,
                                QLabel, QLineEdit, QMenu, QPlainTextEdit, QPushButton, QSizePolicy,
                                QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
@@ -121,10 +121,37 @@ class ClusterClient(QObject):
         return True
 
 
+class HistoryLineEdit(QLineEdit):
+    """A command line where ↑ / ↓ bring back earlier commands."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.history: list[str] = []
+        self._pos = 0
+
+    def remember(self, cmd: str):
+        if cmd and (not self.history or self.history[-1] != cmd):
+            self.history.append(cmd)
+            del self.history[:-50]
+        self._pos = len(self.history)
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (Qt.Key_Up, Qt.Key_Down):
+            if self.history:
+                step = -1 if ev.key() == Qt.Key_Up else 1
+                self._pos = max(0, min(len(self.history), self._pos + step))
+                self.setText(self.history[self._pos] if self._pos < len(self.history) else "")
+            return
+        super().keyPressEvent(ev)
+
+
 class TelnetPane(QWidget):
     """Connection controls + raw cluster text + command line. Safe to hide."""
 
     connectRequested = Signal(bool)          # True = connect, False = disconnect
+    buttonCommand = Signal(str)              # a command button's command (before {CALL} etc.)
+    editButtonsRequested = Signal()
+    showButtonsChanged = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -140,10 +167,65 @@ class TelnetPane(QWidget):
         self.console = QPlainTextEdit(readOnly=True)
         self.console.setMaximumBlockCount(1000)
         self.console.setStyleSheet('font: 10pt "Menlo", "Consolas", monospace;')
-        self.cmd = QLineEdit(placeholderText="Cluster command (e.g. sh/dx 30), Enter to send")
+        self.console.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.console.customContextMenuRequested.connect(self._console_menu)
+        self.cmd = HistoryLineEdit(placeholderText="Cluster command (e.g. sh/dx 30), Enter to send · ↑↓ history")
         self.cmd.setStyleSheet("font: 11pt;")
         v.addWidget(self.console, 1)
         v.addWidget(self.cmd)
+        # N1MM-style command buttons across the bottom; right-click to edit them
+        self.button_box = QWidget()
+        self.button_box.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.button_box.customContextMenuRequested.connect(self._button_menu)
+        grid = QGridLayout(self.button_box)
+        grid.setContentsMargins(0, 0, 0, 0); grid.setSpacing(2)
+        self.cmd_buttons: list[QPushButton] = []
+        for i in range(12):
+            b = QPushButton()
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet("min-width: 30px")
+            b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+            b.setContextMenuPolicy(Qt.CustomContextMenu)
+            b.customContextMenuRequested.connect(self._button_menu)
+            b.clicked.connect(lambda _=False, n=i: self._press(n))
+            grid.addWidget(b, i // 6, i % 6)
+            self.cmd_buttons.append(b)
+        v.addWidget(self.button_box)
+        self.buttons: list[dict] = []
+
+    # -- command buttons -----------------------------------------------------
+    def set_buttons(self, buttons: list[dict], show: bool = True):
+        self.buttons = buttons
+        for b, d in zip(self.cmd_buttons, buttons):
+            b.setText(d["label"] or "")
+            b.setToolTip(d["command"] + "\n(right-click to edit the buttons)" if d["command"] else
+                         "Right-click to edit the buttons")
+            b.setEnabled(bool(d["command"]))
+        self.button_box.setVisible(show)
+
+    def _press(self, n: int):
+        if n < len(self.buttons) and self.buttons[n]["command"]:
+            self.buttonCommand.emit(self.buttons[n]["command"])
+
+    def _button_menu(self, _pos=None):
+        from PySide6.QtGui import QCursor
+        m = QMenu(self)
+        m.addAction("Edit buttons…", self.editButtonsRequested.emit)
+        m.addAction("Hide buttons (show them again: right-click the cluster text)",
+                    lambda: self.showButtonsChanged.emit(False))
+        m.exec(QCursor.pos())
+
+    def _console_menu(self, pos):
+        m = self.console.createStandardContextMenu()
+        m.addSeparator()
+        a = m.addAction("Show command buttons")
+        a.setCheckable(True); a.setChecked(self.button_box.isVisible())
+        a.toggled.connect(self.showButtonsChanged.emit)
+        m.addAction("Edit command buttons…", self.editButtonsRequested.emit)
+        m.exec(self.console.mapToGlobal(pos))
+
+    def remember(self, cmd: str):
+        self.cmd.remember(cmd)
 
     def set_connected(self, connected: bool, text: str):
         self.status_lbl.setText(text)

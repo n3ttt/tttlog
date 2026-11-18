@@ -12,7 +12,7 @@ from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+                               QListWidget, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
                                QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import config
@@ -29,7 +29,7 @@ from ..core.rig import from_logger_mode, to_logger_mode
 from ..export.adif import export_adif, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
-from .dialogs import (ClusterDialog, EditQsoDialog, KeyerDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
+from .dialogs import (ClusterButtonsDialog, ClusterDialog, EditQsoDialog, FKeyDialog, KeyerDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
                       WsjtxDialog,
                       StationDialog)
 from .docks import Pane
@@ -192,6 +192,8 @@ class MainWindow(QMainWindow):
         for i in range(12):
             b = QPushButton()
             b.clicked.connect(lambda _=False, n=i: self.fkey(n))
+            b.setContextMenuPolicy(Qt.CustomContextMenu)                 # right-click: edit this key
+            b.customContextMenuRequested.connect(lambda _pos, n=i: self._fkey_menu(n))
             b.setFocusPolicy(Qt.NoFocus)
             b.setStyleSheet("min-width: 30px")           # labels elide on a narrow pane
             b.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -259,6 +261,11 @@ class MainWindow(QMainWindow):
         self.cluster.state.connect(self._on_cluster_state)
         self.telnet_pane.connectRequested.connect(self.cluster_connect)
         self.telnet_pane.cmd.returnPressed.connect(self._cluster_cmd)
+        self.telnet_pane.set_buttons(config.cluster_buttons(self.cluster_cfg),
+                                     self.cluster_cfg.get("show_buttons", True))
+        self.telnet_pane.buttonCommand.connect(self.cluster_button)
+        self.telnet_pane.editButtonsRequested.connect(self.edit_cluster_buttons)
+        self.telnet_pane.showButtonsChanged.connect(self._show_cluster_buttons)
         self.spots_pane.spotActivated.connect(self.go_to_spot)
         self.spots_pane.colorsChanged.connect(self._save_colors)
         self.spots_pane.spotLastRequested.connect(self.spot_last_qso)
@@ -462,7 +469,8 @@ class MainWindow(QMainWindow):
         page = self.macros.get(self.mode, self.macros.get("SSB"))["RUN" if self.run_mode else "SP"]
         for i, b in enumerate(self.fbuttons):
             m = page[i] if i < len(page) else {"label": ""}
-            b.setText(f"F{i + 1} {m.get('label', '')}"); b.setToolTip(b.text())
+            b.setText(f"F{i + 1} {m.get('label', '')}")
+            b.setToolTip(f"{b.text()}: {m.get('text', '')}\nRight-click to edit")
         if self.engine:
             self.sent_lbl.setText(f"Sent: {self.engine.default_rst(self.mode)} {self.engine.sent_exchange()}")
         self.settings.setValue("freq_khz", self.freq_khz)
@@ -984,6 +992,40 @@ class MainWindow(QMainWindow):
             self._check_privileges()
             self._restrike_spots()
 
+    def _macro_page(self) -> tuple[str, str, list]:
+        mode = self.mode if self.mode in self.macros else "SSB"
+        page = "RUN" if self.run_mode else "SP"
+        return mode, page, self.macros[mode][page]
+
+    def _fkey_menu(self, n: int):
+        from PySide6.QtGui import QCursor
+        mode, page, rows = self._macro_page()
+        label = rows[n].get("label", "") if n < len(rows) else ""
+        m = QMenu(self)
+        m.addAction(f"Edit F{n + 1} {label}…".replace("  ", " "), lambda: self.edit_fkey(n))
+        if self.mode in VOICE_MODES and mode == "SSB":
+            m.addAction(f"Record F{n + 1}'s voice message (Ctrl+Shift+F{n + 1})", lambda: self.record_fkey(n))
+            path = self.wav_path(rows[n]["wav"]) if n < len(rows) and rows[n].get("wav") else None
+            if path is not None and path.exists():
+                m.addAction(f"Play F{n + 1} here (not transmitting)", lambda: self.keyer.preview(path))
+        m.addSeparator()
+        m.addAction("Edit all function keys…", self.edit_macros)
+        m.exec(QCursor.pos())
+
+    def edit_fkey(self, n: int):
+        """Edit one F-key of the page in use (mode + Run/S&P)."""
+        mode, page, rows = self._macro_page()
+        while len(rows) <= n:
+            rows.append({"key": f"F{len(rows) + 1}", "label": "", "text": "", "wav": ""})
+        dlg = FKeyDialog(f"F{n + 1}", page, mode, rows[n], voice=(mode == "SSB"), parent=self)
+        r = dlg.exec()
+        if r:
+            rows[n] = dlg.macro(rows[n])
+            config.save_macros(self.macros)
+            self._refresh_radio()
+            if r == FKeyDialog.RECORD:
+                self.record_fkey(n)
+
     def edit_macros(self):
         dlg = MacroDialog(self.macros, self)
         if dlg.exec():
@@ -1180,8 +1222,39 @@ class MainWindow(QMainWindow):
     def _cluster_cmd(self):
         cmd = self.telnet_pane.cmd.text().strip()
         if cmd:
+            self.telnet_pane.remember(cmd)
             self._cluster_command(cmd)
         self.telnet_pane.cmd.clear()
+
+    # -- cluster command buttons (N1MM style) -----------------------------------
+    def cluster_button(self, command: str) -> bool:
+        call = self.call.text().strip().upper() or (self.qsos[-1].call if self.qsos else "")
+        if "{CALL}" in command and not call:
+            self.banner("Type a call first (that button uses {CALL})", "#ffd166")
+            return False
+        sent = False
+        for part in config.expand_cluster_command(command, self.station.call, call, self.freq_khz):
+            if part.upper() == "{CONN}":
+                self.telnet_pane.append_console("> (reconnecting)")
+                self.cluster_connect(False)
+                self.cluster_connect(True)
+                sent = True
+            else:
+                sent = self._cluster_command(part) or sent
+        return sent
+
+    def edit_cluster_buttons(self):
+        dlg = ClusterButtonsDialog(config.cluster_buttons(self.cluster_cfg), self)
+        if dlg.exec():
+            self.cluster_cfg["buttons"] = dlg.buttons()
+            config.save_cluster(self.cluster_cfg)
+            self.telnet_pane.set_buttons(config.cluster_buttons(self.cluster_cfg),
+                                         self.cluster_cfg.get("show_buttons", True))
+
+    def _show_cluster_buttons(self, show: bool):
+        self.cluster_cfg["show_buttons"] = bool(show)
+        config.save_cluster(self.cluster_cfg)
+        self.telnet_pane.button_box.setVisible(bool(show))
 
     def go_to_spot(self, s):
         """QSY to a spot and put the call in the entry line (S&P)."""

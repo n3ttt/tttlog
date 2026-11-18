@@ -1,6 +1,7 @@
 """User settings: station profile + function-key macros (YAML in ~/.tttlog)."""
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -94,7 +95,41 @@ DEFAULT_CLUSTER = {
     "auto_send_filter": False,  # send the filter to the cluster whenever it changes
     "share_cluster": True,    # let networked stations use my cluster connection
     "use_network_cluster": True,  # when I'm not connected, use a networked station's
+    "show_buttons": True,
+    "buttons": None,          # None = DEFAULT_CLUSTER_BUTTONS (edit: right-click the buttons)
 }
+
+# Cluster window command buttons (N1MM style: across the bottom, right-click to edit).
+# Tokens: {MYCALL} {CALL} (the entry line's call, else the last QSO's) {FREQ} (kHz);
+# {CONN} reconnects to the cluster; "|" sends several commands from one button.
+DEFAULT_CLUSTER_BUTTONS = [
+    {"label": "SH/DX", "command": "SH/DX 30"},
+    {"label": "DX of call", "command": "SH/DX {CALL}"},
+    {"label": "WWV", "command": "SH/WWV"},
+    {"label": "Sun", "command": "SH/SUN"},
+    {"label": "Filter?", "command": "SH/FILTER"},
+    {"label": "Users", "command": "SH/USERS"},
+    {"label": "Skimmer on", "command": "SET/SKIMMER"},
+    {"label": "Skimmer off", "command": "SET/NOSKIMMER"},
+    {"label": "Heading", "command": "SH/HEADING {CALL}"},
+    {"label": "QRZ", "command": "SH/QRZ {CALL}"},
+    {"label": "Reconnect", "command": "{CONN}"},
+    {"label": "Bye", "command": "BYE"},
+]
+
+
+def cluster_buttons(cfg: dict) -> list[dict]:
+    """The 12 buttons (saved ones, padded with blanks; defaults if never edited)."""
+    rows = cfg.get("buttons") or DEFAULT_CLUSTER_BUTTONS
+    rows = [{"label": str(r.get("label", "")), "command": str(r.get("command", ""))} for r in rows][:12]
+    return rows + [{"label": "", "command": ""} for _ in range(12 - len(rows))]
+
+
+def expand_cluster_command(command: str, mycall: str, call: str, freq_khz: float) -> list[str]:
+    """A button's command -> the lines to send ({CONN} stays as its own item)."""
+    text = (command.replace("{MYCALL}", mycall).replace("{CALL}", call)
+            .replace("{FREQ}", f"{freq_khz:.1f}"))
+    return [part.strip() for part in text.split("|") if part.strip()]
 
 # Macro text: {MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are substituted.
 # Action tokens: {CLEAR} wipes the entry line; {SPOT} spots the last QSO
@@ -179,7 +214,7 @@ def save_station(st: Station) -> None:
 def load_macros() -> dict:
     if MACROS_FILE.exists():
         return yaml.safe_load(MACROS_FILE.read_text())
-    return DEFAULT_MACROS
+    return copy.deepcopy(DEFAULT_MACROS)           # a copy: edits must never change the defaults
 
 
 def save_macros(m: dict) -> None:

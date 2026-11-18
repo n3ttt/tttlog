@@ -196,6 +196,45 @@ class MacroDialog(QDialog):
         return self.macros
 
 
+class FKeyDialog(QDialog):
+    """Right-click an F-key button: edit that one key (label, text, voice file)."""
+    RECORD = 2                                   # exec() result: save, then record the voice message
+
+    def __init__(self, key: str, page: str, mode: str, macro: dict, voice: bool, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{key} · {mode} {page}")
+        self.resize(460, 0)
+        f = QFormLayout(self)
+        self.label = QLineEdit(macro.get("label", ""))
+        self.text = QLineEdit(macro.get("text", ""))
+        self.wav = QLineEdit(macro.get("wav", ""))
+        f.addRow("Label", self.label)
+        f.addRow("Text" if not voice else "Text (shown)", self.text)
+        if voice:
+            f.addRow("Voice file", self.wav)
+        hint = QLabel("{MYCALL} {CALL} {EXCH} {RST} {STATE} {ZONE} are filled in · "
+                      "{CLEAR} wipes the entry line · {SPOT} spots the last QSO")
+        hint.setWordWrap(True)
+        f.addRow(hint)
+        box = _buttons(self)
+        if voice:
+            rec = box.addButton("Save && record…", QDialogButtonBox.ActionRole)
+            rec.setToolTip("Save, then record this key's message (Esc or the key again to stop)")
+            rec.clicked.connect(lambda: self.done(self.RECORD))
+        f.addRow(box)
+        self.voice = voice
+        self.text.setFocus()
+
+    def macro(self, old: dict) -> dict:
+        out = dict(old)
+        out.update(label=self.label.text().strip(), text=self.text.text().strip())
+        if self.voice:
+            from ..core.keyer import safe_wav_name
+            w = self.wav.text().strip()
+            out["wav"] = safe_wav_name(w) if w else ""
+        return out
+
+
 class EditQsoDialog(QDialog):
     def __init__(self, q: QSO, parent=None):
         super().__init__(parent)
@@ -415,6 +454,43 @@ def _serial_value(box: QComboBox) -> str:
     if idx >= 0 and text == box.itemText(idx):
         return box.itemData(idx) or ""
     return text.split()[0] if text and text != "(none)" else ""
+
+
+class ClusterButtonsDialog(QDialog):
+    """Right-click the cluster command buttons ▸ Edit buttons: 12 x (label, command)."""
+
+    def __init__(self, buttons: list[dict], parent=None):
+        from .. import config
+        super().__init__(parent)
+        self.setWindowTitle("Cluster command buttons")
+        self.resize(560, 470)
+        v = QVBoxLayout(self)
+        self.table = QTableWidget(12, 2)
+        self.table.setHorizontalHeaderLabels(["Button", "Command sent to the cluster"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self._fill(buttons)
+        v.addWidget(self.table)
+        hint = QLabel("{MYCALL} your call · {CALL} the call in the entry line (else your last QSO's) · "
+                      "{FREQ} your frequency in kHz · {CONN} reconnect to the cluster · "
+                      "| between commands sends several, e.g.  SH/DX 30 | SH/WWV")
+        hint.setWordWrap(True)
+        v.addWidget(hint)
+        row = QHBoxLayout()
+        reset = QPushButton("Back to the defaults")
+        reset.clicked.connect(lambda: self._fill(config.DEFAULT_CLUSTER_BUTTONS))
+        row.addWidget(reset); row.addStretch()
+        v.addLayout(row)
+        v.addWidget(_buttons(self))
+
+    def _fill(self, buttons):
+        rows = list(buttons) + [{"label": "", "command": ""}] * (12 - len(buttons))
+        for r, d in enumerate(rows[:12]):
+            self.table.setItem(r, 0, QTableWidgetItem(d.get("label", "")))
+            self.table.setItem(r, 1, QTableWidgetItem(d.get("command", "")))
+
+    def buttons(self) -> list[dict]:
+        get = lambda r, c: (self.table.item(r, c).text().strip() if self.table.item(r, c) else "")
+        return [{"label": get(r, 0) or get(r, 1)[:12], "command": get(r, 1)} for r in range(12)]
 
 
 class KeyerDialog(QDialog):
