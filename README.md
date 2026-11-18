@@ -96,6 +96,10 @@ View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act
 
 Panes don't have to fill the window. Drag the inner edge of the left or right column (Log, Spots, Rate, Needed...) to make it smaller, and the window keeps an empty area in the middle. Drag the edge back to close the gap. To go back to panes always filling the window, untick View ▸ Leave empty space.
 
+Minimizing a pane (–) only lets the pane under or over it grow into the space; nothing else moves or changes width, and restoring it (+) puts every pane back where it was.
+
+**Layouts are kept, per operator.** The layout (where each pane is, its size, which are minimized or popped out) is saved when tttlog closes and comes back next time. Each operator has their own: **OPON** saves the outgoing operator's layout and switches to the incoming operator's (the first time someone logs on, they start from the current layout). View ▸ **Save layout for <op>** saves it right away; View ▸ **Reset to the default layout** goes back to tttlog's arrangement. Layouts are kept on each computer.
+
 ## Rate pane
 
 Shows the rate over the last 10 and last 100 QSOs (per hour, measured to now), the QSO counts for the last 60 and last 15 minutes, and the best 60-minute run so far.

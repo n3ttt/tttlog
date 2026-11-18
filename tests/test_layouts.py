@@ -1,0 +1,73 @@
+"""Panes stay put when one is minimized; layouts are kept per operator (OPON)."""
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtCore import Qt
+
+from test_rig import _pump, app, win  # noqa: F401  (fixtures)
+
+NAMES = ("entry", "log", "spots", "telnet", "score", "check_partial", "rate")
+
+
+def _geo(w):
+    return {n: getattr(w, "dock_" + n).geometry().getRect() for n in NAMES}
+
+
+def _settle(app, ms=250):
+    _pump(app, lambda: False, ms)
+
+
+def _arrange(app, win):
+    """Telnet under Spots, narrow columns with empty space between (a user's own layout).
+    (Tests run on an 800x800 fake screen, so the window has to fit in that.)"""
+    win.resize(790, 740); win.show(); _settle(app, 700)
+    win.splitDockWidget(win.dock_spots, win.dock_telnet, Qt.Vertical); _settle(app)
+    win.resizeDocks([win.dock_score], [180], Qt.Horizontal)
+    win.resizeDocks([win.dock_log, win.dock_spots], [150, 250], Qt.Horizontal); _settle(app)
+
+
+def test_minimize_doesnt_move_other_panes(app, win):
+    _arrange(app, win)
+    before = _geo(win)
+    win.dock_telnet.set_minimized(True); _settle(app)
+    after = _geo(win)
+    moved = {n for n in NAMES if after[n] != before[n]}
+    assert moved == {"spots", "telnet"}                     # only Spots grows down into the space
+    assert after["spots"][2] == before["spots"][2]          # ...and keeps its width
+    assert after["log"] == before["log"]
+    win.dock_telnet.set_minimized(False); _settle(app)
+    assert _geo(win) == before                              # restore puts everything back
+
+
+def test_layout_per_operator(app, win):
+    _arrange(app, win)
+    win.opon("N3TTT")
+    win.dock_telnet.set_minimized(True); _settle(app)
+    mine = _geo(win)
+    win.opon("K3ABC")                                       # first time: keeps the current layout
+    assert "window layout" not in win.banner_lbl.text()
+    win.dock_telnet.set_minimized(False)
+    win.resizeDocks([win.dock_log, win.dock_spots], [260, 140], Qt.Horizontal); _settle(app)
+    theirs = _geo(win)
+    assert theirs != mine
+
+    win.opon("N3TTT"); _settle(app)                         # back to my layout
+    assert "N3TTT's window layout" in win.banner_lbl.text()
+    assert win.dock_telnet.minimized and _geo(win) == mine
+    win.opon("K3ABC"); _settle(app)                         # and theirs was saved when they left
+    assert not win.dock_telnet.minimized and _geo(win) == theirs
+
+
+def test_layout_survives_restart(app, win, tmp_path, monkeypatch):
+    import tttlog.ui.main_window as mw
+    _arrange(app, win)
+    win.dock_telnet.set_minimized(True); _settle(app)
+    before = _geo(win)
+    win.close()                                             # saves it (same QSettings file)
+    w2 = mw.MainWindow()
+    w2.show(); _settle(app, 700)
+    assert w2.dock_telnet.minimized
+    assert _geo(w2) == before
+    w2.reset_layout(); _settle(app, 500)                    # View ▸ Reset to the default layout
+    assert not w2.dock_telnet.minimized and w2.dock_telnet.isVisible()
+    w2.close()

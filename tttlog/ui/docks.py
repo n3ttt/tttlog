@@ -8,9 +8,25 @@ other window. The ⇲ button (or double-clicking the title bar) docks it again.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import (QDockWidget, QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
-                               QToolButton, QWidget)
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtWidgets import (QDockWidget, QFrame, QHBoxLayout, QLabel, QMainWindow, QScrollArea,
+                               QSizePolicy, QToolButton, QWidget)
+
+QWIDGETSIZE_MAX = (1 << 24) - 1
+
+
+def _docked(mw) -> list:
+    """Panes docked in the main window (not popped out), one per tab group: a tab
+    hidden behind another reports a stale size, and resizing it would resize the
+    whole group."""
+    out = []
+    for d in mw.findChildren(QDockWidget):
+        if not d.isVisible() or d.isFloating():
+            continue
+        if mw.tabifiedDockWidgets(d) and d.visibleRegion().isEmpty():
+            continue                                  # a tab that isn't the one showing
+        out.append(d)
+    return out
 
 FLOAT_FLAGS = (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint |
                Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
@@ -92,14 +108,62 @@ class Pane(QDockWidget):
     def toggle_minimized(self):
         self.set_minimized(not self.minimized)
 
-    def set_minimized(self, on: bool):
+    def set_minimized(self, on: bool, restore_heights: dict | None = None):
+        """restore_heights: {pane objectName: height} to give back on restore (a saved
+        layout's), instead of the heights at the moment of minimizing."""
         if self.isFloating():
             if on:
                 self.showMinimized()
             return
+        if on == self.minimized:
+            return
+        mw = self.parentWidget() if isinstance(self.parentWidget(), QMainWindow) else None
+        # Rolling up must not move the other panes: keep every column's width
+        # (only this pane's height goes to its neighbour), and give it back its
+        # own height when it's restored.
+        widths = {d: d.width() for d in _docked(mw)} if mw else {}
+        if on:
+            # heights of everything as it was, to put back on restore
+            self._heights_before_min = {d: d.height() for d in _docked(mw)} if mw else {}
+            if restore_heights and mw:
+                by_name = {d.objectName(): d for d in _docked(mw)}
+                self._heights_before_min = {by_name[n]: h for n, h in restore_heights.items() if n in by_name}
+            self.setFixedWidth(self.width())          # its column keeps its width
         self.minimized = on
         self.widget().setVisible(not on)
+        if not on:
+            self.setMinimumWidth(0); self.setMaximumWidth(QWIDGETSIZE_MAX)
         self.bar.sync()
+        if mw:
+            self._settle_gen = getattr(self, "_settle_gen", 0) + 1
+            gen = self._settle_gen
+            QTimer.singleShot(0, lambda: self._settle(mw, widths, on, gen))
+
+    def restore_heights(self) -> dict:
+        """What restoring this (minimized) pane would give back, by pane name (saved with layouts)."""
+        return {d.objectName(): h for d, h in getattr(self, "_heights_before_min", {}).items()}
+
+    def unroll_now(self):
+        """Un-minimize without resizing anything (a whole layout is about to be restored)."""
+        if self.minimized:
+            self.minimized = False
+            self.widget().setVisible(True)
+            self.setMinimumWidth(0); self.setMaximumWidth(QWIDGETSIZE_MAX)
+            self._settle_gen = getattr(self, "_settle_gen", 0) + 1     # drop a pending re-layout
+            self.bar.sync()
+
+    def _settle(self, mw, widths: dict, minimized: bool, gen: int | None = None):
+        if gen is not None and gen != getattr(self, "_settle_gen", 0):
+            return
+        alive = [d for d in widths if d in _docked(mw)]
+        if alive:
+            mw.resizeDocks(alive, [widths[d] for d in alive], Qt.Horizontal)
+        heights = getattr(self, "_heights_before_min", {})
+        if not minimized and heights and not self.isFloating():
+            mine = self.geometry()
+            back = [d for d in heights if d in _docked(mw) and not getattr(d, "minimized", False)
+                    and d.geometry().left() < mine.right() and mine.left() < d.geometry().right()]  # my column
+            mw.resizeDocks(back, [heights[d] for d in back], Qt.Vertical)
 
     # -- pop out / dock back ---------------------------------------------------
     def toggle_floating(self):
@@ -118,4 +182,5 @@ class Pane(QDockWidget):
         if self.minimized:
             self.minimized = False
             self.widget().setVisible(True)
+            self.setMinimumWidth(0); self.setMaximumWidth(QWIDGETSIZE_MAX)
         self.bar.sync()

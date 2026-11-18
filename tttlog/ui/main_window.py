@@ -100,18 +100,28 @@ class MainWindow(QMainWindow):
         self._build_shortcuts()
         self._refresh_radio()
 
-        geo = self.settings.value("geometry")
+        self._factory_state = self.saveState()      # the panes as built, before any saved layout
+        saved_op = self._op_layout(self.current_op)
+        geo = saved_op["geometry"] if saved_op else self.settings.value("geometry")
         if geo:
             self.restoreGeometry(geo)
         elif self.screen() is not None:              # first run: use most of the screen
             avail = self.screen().availableGeometry()
             self.resize(int(avail.width() * 0.92), int(avail.height() * 0.9))
         self._fit_to_screen()
-        st = self.settings.value("window_state")
-        if str(self.settings.value("layout_version", "")) != LAYOUT_VERSION:
+        st = saved_op["state"] if saved_op else self.settings.value("window_state")
+        if not saved_op and str(self.settings.value("layout_version", "")) != LAYOUT_VERSION:
             st = None                                # panes changed: start from the default layout
         if st:
             self.restoreState(st)
+            mins = saved_op["minimized"] if saved_op else str(self.settings.value("minimized_panes", "") or "")
+
+            def after_shown():
+                # Qt loses the right column's width when the state is restored before the
+                # window is on screen (with the empty-space area): restore it again now.
+                self.restoreState(st)
+                QTimer.singleShot(0, lambda: self._apply_minimized(mins))   # once it's laid out
+            QTimer.singleShot(0, after_shown)
         else:
             # Qt leaves a stray tab bar if two tab groups are made before the window
             # is first shown, so build the default tabs right after it appears.
@@ -411,6 +421,12 @@ class MainWindow(QMainWindow):
                                        checkable=True, checked=self.free_layout,
                                        toggled=self.set_free_layout)
         view.addAction(self.free_layout_act)
+        view.addSeparator()
+        self.save_layout_act = QAction("Save layout for this operator", self, triggered=lambda: self.save_op_layout())
+        view.addAction(self.save_layout_act)
+        view.aboutToShow.connect(lambda: self.save_layout_act.setText(
+            f"Save layout for {self.current_op} (OPON brings it back)"))
+        view.addAction(QAction("Reset to the default layout", self, triggered=self.reset_layout))
         view.addSeparator()
         self.scale_menu = view.addMenu("Display size")
         cur = int(self.settings.value("ui_scale", 100) or 100)
@@ -941,11 +957,17 @@ class MainWindow(QMainWindow):
         if not OP_RE.match(op):
             self.banner(f"OPON: '{op}' doesn't look like a callsign", "#ffd166")
             return False
+        prev = self.current_op
+        if op != prev:
+            self.save_op_layout(prev, quiet=True)      # the outgoing operator keeps their layout
         self.settings.setValue("current_op", op)
+        layout_note = ""
+        if op != prev and self.load_op_layout(op):
+            layout_note = f" · {op}'s window layout"
         self._refresh_radio()
         self._push_net_status()
         self._refresh_rates()
-        msg = f"Operator is now {op}"
+        msg = f"Operator is now {op}{layout_note}"
         if self.station.license_class and self.settings.value(f"op_class/{op}") is None \
                 and op not in (self.station.call, self.station.operator):
             msg += (f" · band limits use the station's {self.license_class} class until you set "
@@ -1676,6 +1698,80 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Display size",
                                 f"Display size set to {pct}%. Quit and restart tttlog to apply it.")
 
+    # -- layouts per operator ------------------------------------------------------
+    def _setting_list(self, key: str) -> list[str]:
+        v = self.settings.value(key, [])
+        if isinstance(v, str):
+            return [v] if v else []
+        return [str(x) for x in (v or [])]
+
+    def _minimized_names(self) -> list[str]:
+        return [d.objectName() for d in self.panes if d.minimized and not d.isFloating()]
+
+    def _minimized_json(self) -> str:
+        """Minimized panes, each with the heights restoring it should give back."""
+        import json
+        return json.dumps({d.objectName(): d.restore_heights() for d in self.panes
+                           if d.minimized and not d.isFloating()})
+
+    def _apply_minimized(self, mins):
+        """mins: {pane name: restore heights} (or a plain list of names)."""
+        if isinstance(mins, str):
+            import json
+            try:
+                mins = json.loads(mins) if mins else {}
+            except ValueError:
+                mins = {}
+        if isinstance(mins, list):
+            mins = {n: {} for n in mins}
+        for d in self.panes:
+            want = d.objectName() in mins
+            if d.minimized != want and d.isVisible() and not d.isFloating():
+                d.set_minimized(want, restore_heights=mins.get(d.objectName()) if want else None)
+
+    def _op_layout(self, op: str) -> dict | None:
+        key = f"layouts/{op.upper()}"
+        st = self.settings.value(f"{key}/state")
+        if not st or str(self.settings.value(f"{key}/version", "")) != LAYOUT_VERSION:
+            return None
+        return {"state": st, "geometry": self.settings.value(f"{key}/geometry"),
+                "minimized": str(self.settings.value(f"{key}/minimized", "") or "")}
+
+    def save_op_layout(self, op: str | None = None, quiet: bool = False):
+        """Remember the window layout for an operator (View ▸ Save layout; also on OPON and on close)."""
+        op = (op or self.current_op).upper()
+        key = f"layouts/{op}"
+        self.settings.setValue(f"{key}/state", self.saveState())
+        self.settings.setValue(f"{key}/geometry", self.saveGeometry())
+        self.settings.setValue(f"{key}/minimized", self._minimized_json())
+        self.settings.setValue(f"{key}/version", LAYOUT_VERSION)
+        if not quiet:
+            self.banner(f"Layout saved for {op}: OPON {op} brings it back")
+
+    def load_op_layout(self, op: str) -> bool:
+        lay = self._op_layout(op)
+        if not lay:
+            return False
+        for d in self.panes:                         # unroll quietly; the saved state sets the sizes
+            d.unroll_now()
+        self.restoreState(lay["state"])              # panes only: the window stays where it is
+        QTimer.singleShot(0, lambda: self._apply_minimized(lay["minimized"]))
+        return True
+
+    def reset_layout(self):
+        """Back to tttlog's default arrangement (the operator's saved layout is kept
+        until they save again or OPON away)."""
+        for d in self.panes:
+            d.unroll_now()
+        for d in self.panes:
+            if d.isFloating():
+                d.setFloating(False)
+        self.restoreState(self._factory_state)
+        for d in self.panes:
+            d.show()
+        self.set_free_layout(self.free_layout, save=False)
+        QTimer.singleShot(0, self._default_tabs)
+
     def minimize_all_panes(self):
         for d in self.panes:
             if d.isVisible():
@@ -1697,6 +1793,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("geometry", self.saveGeometry())
         self.settings.setValue("window_state", self.saveState())
         self.settings.setValue("layout_version", LAYOUT_VERSION)
+        self.settings.setValue("minimized_panes", self._minimized_json())
+        self.save_op_layout(quiet=True)
         self.cluster.disconnect_from()
         self.net.stop()
         self.wsjtx.stop()
