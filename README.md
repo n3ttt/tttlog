@@ -28,8 +28,8 @@ The **Release** workflow tests and builds Mac (both chips), Windows, and Linux, 
 
 ```bash
 brew install python@3.12 git            # skip if already installed
-git clone https://github.com/n3ttt/<repo>.git
-cd <repo>
+git clone https://github.com/n3ttt/tttlog.git
+cd tttlog
 python3.12 -m venv ~/.venvs/tttlog && ln -s ~/.venvs/tttlog .venv   # see note below
 source .venv/bin/activate
 pip install -e ".[dev]"
