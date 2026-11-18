@@ -31,6 +31,8 @@ To uninstall, delete the tttlog folder. Your logs and settings are kept
 3. Type a call, press Space to jump to the exchange, press Enter to log.
    Typing a frequency in kHz (for example 14250) + Enter changes frequency.
    Typing OPON + Enter (or OPON K3ABC) changes who is operating; each
+   FT8/FT4: Config > WSJT-X, tick it, and set WSJT-X's Settings > Reporting >
+   UDP Server to 127.0.0.1 port 2237. QSOs you log in WSJT-X go into tttlog.
    QSO records its operator and the Rate pane shows rates per operator.
 4. Optional DX cluster: Config > DX cluster (default w3lpl.net, port 7373,
    logs in with your call), then Cluster > Connect (Ctrl+K).

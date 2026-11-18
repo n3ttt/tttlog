@@ -38,6 +38,8 @@ If it says something about FUSE, run it like this instead:
 3. Type a call, press Space to jump to the exchange, press Enter to log.
    Typing a frequency in kHz (for example 14250) + Enter changes frequency.
    Typing OPON + Enter (or OPON K3ABC) changes who is operating.
+   FT8/FT4: Config > WSJT-X, tick it, and set WSJT-X's Settings > Reporting >
+   UDP Server to 127.0.0.1 port 2237. QSOs you log in WSJT-X go into tttlog.
 4. Optional DX cluster: Config > DX cluster, then Cluster > Connect (Ctrl+K).
    Spotting (F11) sends a real spot everyone sees, so only spot real QSOs.
 5. Several computers (multi-op): Config > Local network on each one, same

@@ -60,7 +60,11 @@ _TAG = re.compile(r"<(\w+):(\d+)(?::\w)?>", re.I)
 
 def import_adif(path: str | Path, general: bool = False) -> list[QSO]:
     """Read QSOs. general=True fills the notes from NAME / QTH / COMMENT."""
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    return parse_adif(Path(path).read_text(encoding="utf-8", errors="replace"), general)
+
+
+def parse_adif(text: str, general: bool = False) -> list[QSO]:
+    """QSOs from ADIF text (a file, or one record from WSJT-X)."""
     eoh = re.search(r"<eoh>", text, re.I)
     body = text[eoh.end():] if eoh else text
     out = []
@@ -79,7 +83,7 @@ def import_adif(path: str | Path, general: bool = False) -> list[QSO]:
             mode = "SSB"
         rcvd = fields.get("SRX_STRING", "")
         if general and not rcvd:
-            rcvd = " ".join(fields[k] for k in ("NAME", "QTH", "COMMENT") if fields.get(k))
+            rcvd = " ".join(fields[k] for k in ("GRIDSQUARE", "NAME", "QTH", "COMMENT") if fields.get(k))
         out.append(QSO(
             call=fields["CALL"], freq_khz=float(fields.get("FREQ", "0") or 0) * 1000,
             mode=mode, rst_sent=fields.get("RST_SENT", ""), rst_rcvd=fields.get("RST_RCVD", ""),
