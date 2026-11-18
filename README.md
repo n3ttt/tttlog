@@ -6,7 +6,25 @@ Keyboard-first, with contest rules kept in files, and built so you never lose a 
 > Status: **v0.1, milestone M0.** Logging, dupe and multiplier checks, scoring, editable F-keys, and ADIF/Cabrillo export all work.
 > Rig control and the voice keyer come in M1. First live target: **ARRL DX SSB, March 6–7, 2027**.
 
-## Quick start (macOS)
+## Install on a Mac (no Python needed)
+
+1. Download the `.dmg` from **[Releases](https://github.com/n3ttt/tttlog/releases)**: `macos-arm64` for Apple Silicon (M1–M4), `macos-x86_64` for Intel.
+2. Open it and drag **tttlog** into **Applications**.
+3. **First launch only:** macOS blocks apps without an Apple Developer ID. Open tttlog once, then go to **System Settings ▸ Privacy & Security**, scroll down, and click **Open Anyway**.
+
+## Version & updates
+
+- **Help ▸ About tttlog** shows the version (and the git commit when running from source). `tttlog --version` prints it too.
+- tttlog checks GitHub once a day. **Help ▸ Check for updates…** checks right away.
+  - **Mac app:** **Update now** downloads the new DMG, replaces the app, and reopens it.
+  - **From source (git clone):** does `git pull` + reinstall, then offers to restart.
+  - **Windows / Linux:** downloads the new build to Downloads.
+
+### Making a release
+Bump `__version__` in `tttlog/__init__.py` and commit to `main`. Then on GitHub: **Releases ▸ Draft a new release**, tag `v<version>` (e.g. `v0.1.0a3`), tick **Set as a pre-release** for alphas, and **Publish**.
+The **Release** workflow tests and builds Mac (both chips), Windows, and Linux, and attaches them to the release (about 15 minutes).
+
+## Run from source (macOS)
 
 ```bash
 brew install python@3.12 git            # skip if already installed
@@ -53,6 +71,9 @@ The same `build_app.py` builds a macOS version on a Mac.
 | **F11** / **Ctrl+Shift+S** | Spot the last QSO (call + frequency) to the cluster |
 | **Ctrl+G** | Go to the newest needed spot (mults first, then Qs) |
 | **Ctrl+Shift+N / M / A** | Spots filter: mults + Qs / mults only / everything |
+| **Ctrl+Shift+J** | Spotters: anywhere → my CQ zone → my continent |
+| **Ctrl+Shift+K** | Skimmer spots: all → none → skimmers only |
+| **Ctrl+Shift+L** | Send the spot filter to the cluster |
 | **Ctrl+Shift+H / R** | Minimize (roll up) all panes / restore them |
 | **Ctrl+Shift+F** | Search spots (call, country, or comment) |
 | Double-click a spot | QSY, switch to S&P, put the call in the entry line |
@@ -94,6 +115,21 @@ Each spot is checked against your log and the contest rules:
 Spots are re-checked after every QSO, edit, and delete, so a mult disappears from the list as soon as you work it.
 The band filter (all bands / current band) and the search box narrow the list further. The status line shows how many mults and Qs are available right now.
 Double-clicking a spot jumps to it. (Rig control in M1 will also tune the radio.)
+
+**Spotter and skimmer filter:** the **Filter** button in the Spots window (or Ctrl+Shift+J / Ctrl+Shift+K) picks which spots you see:
+- spotters anywhere, in your CQ zone, on your continent, in your country, or in CQ zones you choose (e.g. 3,4,5);
+- skimmer (RBN, `CALL-#`) and human spots, no skimmer spots, or skimmer spots only.
+
+The filter works here, on any cluster and on spots shared over the network. The button shows **Filter ●** while one is on, and the status line counts what's hidden. Spots whose spotter can't be placed are kept.
+**Send this filter to the cluster** (Ctrl+Shift+L) also asks the node itself to send less, so a busy skimmer feed doesn't flood the line. tttlog works out the node software from its login banner, or you can set it in Config ▸ DX cluster:
+
+| Cluster | My zone, no skimmers |
+|---|---|
+| AR-Cluster (W3LPL, K1TTT) | `set dx filter SpotterCqZone=5 and not skimmer` |
+| DXSpider | `clear/spots all`, `accept/spots by_zone 5`, `unset/skimmer` |
+| CC Cluster (VE7CC) | `set/noskimmer` (CC filters spotters by country only; zone and continent stay local) |
+
+Tick **Keep the cluster's filter matched** in the Filter menu to send it every time you change the filter. Cluster ▸ Show the cluster's filter sends `sh/filter`.
 
 **Spotting:** **F11 Spot** (on every F-key page), the **Spot last QSO** button, or Cluster ▸ Spot last QSO (Ctrl+Shift+S) sends `DX <kHz> <call>` for your most recent QSO, with no comment.
 Turn on **Cluster ▸ Auto-spot S&P QSOs** (also in Config ▸ DX cluster) to spot every new S&P QSO as you log it. Run QSOs, dupes, and stations you've already spotted on that band this session are skipped.
@@ -138,6 +174,10 @@ What's shared:
 - The **Network** pane lists each station's operator, band, frequency, mode, Run/S&P, and QSO count. A station on your band and mode is highlighted, and a clock more than a minute off is flagged. The box at the bottom sends talk messages to all stations.
 
 Operators: type **OPON** + Enter in the call field (or **OPON K3ABC**, or Operating ▸ Operator on…, Ctrl+Shift+O) when someone sits down. New QSOs from that computer are logged under that operator, the top bar shows **OP K3ABC**, and the Network pane shows it to the other stations. The OPON operator is kept per computer; without OPON the operator from the station profile is used. The **Rate** pane lists each operator's QSOs, share, last-10 rate, last-60 count and best 60. Pick an operator under **Rates for** (or double-click their row) to see just their rates and hours. The Cabrillo OPERATORS line lists everyone who logged a QSO.
+
+**Same contest check:** stations on different contests (or with no log open) still link, so talk, status, and the shared cluster keep working, but **their logs are not shared**. Both stations get an orange warning, for example *MULT is logging CQ-WW-SSB, you're on ARRL-DX-SSB*. The Network pane shows that station in red with **log not shared**. As soon as both open the same contest they relink and swap whatever is missing.
+
+**One cluster connection for the shack:** only one computer needs to log in to the DX cluster. With **Share my cluster connection** on (Config ▸ DX cluster, on by default), its cluster text goes to the other stations. A station that isn't connected itself shows **Using RUN1's cluster connection** in its Telnet window and fills its Spots window from it. Commands typed there, spots (F11, auto-spot), and **Send filter to cluster** go out through the connected station's login. Each station keeps its own Spots filter. If more than one computer is connected, the others use the one with the lowest ID. A station can still connect itself (Ctrl+K), and then uses its own connection.
 
 The network name keeps separate groups apart; it isn't a password. Use it only on a network you trust.
 

@@ -4,8 +4,9 @@
     python scripts/update_cty.py          # bundle the latest country file
     python scripts/build_app.py
 
-Output: dist/tttlog/ (a folder with tttlog.exe on Windows, or tttlog on
-macOS/Linux) and dist/tttlog-<version>-<platform>.zip (.tar.gz on Linux, so
+Output: dist/tttlog/ (a folder with tttlog.exe on Windows, tttlog on Linux),
+dist/tttlog.app + dist/tttlog-<version>-macos-<arch>.dmg on a Mac,
+and dist/tttlog-<version>-<platform>.zip (.tar.gz on Linux, so
 the program keeps its "executable" mark) ready to hand out. On Linux,
 scripts/build_appimage.sh then turns the folder into a single AppImage.
 PyInstaller can't cross-compile: build the Windows zip on Windows (the
@@ -62,6 +63,8 @@ def main() -> int:
     print(" ".join(cmd))
     subprocess.run(cmd, check=True, cwd=ROOT)
 
+    if sys.platform == "darwin":
+        return build_mac_dmg()
     plat = {"Windows": "windows", "Darwin": "macos", "Linux": "linux"}[platform.system()]
     folder = ROOT / "dist" / "tttlog"
     (folder / "README-FIRST.txt").write_text((ROOT / "docs" / "TESTERS.md").read_text(encoding="utf-8"),
@@ -70,6 +73,34 @@ def main() -> int:
     fmt = "gztar" if plat == "linux" else "zip"
     out = shutil.make_archive(str(zip_base), fmt, root_dir=folder.parent, base_dir=folder.name)
     print(f"Built {folder}\nArchive {out}")
+    return 0
+
+
+def build_mac_dmg() -> int:
+    """dist/tttlog.app -> dist/tttlog-<version>-macos-<arch>.dmg (drag-to-Applications)."""
+    ver = version()
+    app = ROOT / "dist" / "tttlog.app"
+    plist = app / "Contents" / "Info.plist"
+    for key in ("CFBundleShortVersionString", "CFBundleVersion"):
+        subprocess.run(["plutil", "-replace", key, "-string", ver, str(plist)], check=True)
+    subprocess.run(["plutil", "-replace", "CFBundleIdentifier", "-string", "com.n3ttt.tttlog", str(plist)],
+                   check=True)
+    # Ad-hoc signature: required on Apple Silicon; not a Developer ID, so first launch needs
+    # System Settings > Privacy & Security > Open Anyway (see README).
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+    arch = "arm64" if platform.machine() == "arm64" else "x86_64"
+    stage = ROOT / "build" / "dmg"
+    shutil.rmtree(stage, ignore_errors=True)
+    stage.mkdir(parents=True)
+    subprocess.run(["ditto", str(app), str(stage / "tttlog.app")], check=True)
+    (stage / "Applications").symlink_to("/Applications")
+    (stage / "README-FIRST.txt").write_text((ROOT / "docs" / "TESTERS-MAC.md").read_text(encoding="utf-8"),
+                                            encoding="utf-8")
+    dmg = ROOT / "dist" / f"tttlog-{ver}-macos-{arch}.dmg"
+    dmg.unlink(missing_ok=True)
+    subprocess.run(["hdiutil", "create", "-volname", f"tttlog {ver}", "-srcfolder", str(stage),
+                    "-ov", "-format", "UDZO", str(dmg)], check=True)
+    print(f"Built {app}\nDisk image {dmg}")
     return 0
 
 

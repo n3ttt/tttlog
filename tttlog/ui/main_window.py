@@ -1,21 +1,25 @@
 """The one window."""
 from __future__ import annotations
 
+import os
 import re
+import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QFont, QKeySequence, QShortcut
+from PySide6.QtCore import QObject, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-                               QListWidget, QMainWindow, QMessageBox, QPushButton,
+                               QListWidget, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
                                QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import config
 from ..contests.engine import ContestEngine, load_rules
-from ..core.cluster import parse_spot, spot_command
-from .. import __version__
+from ..core.cluster import (CLUSTER_KINDS, Home, describe_filter, detect_cluster_kind, filter_commands,
+                            parse_spot, spot_command)
+from .. import __version__, updater
 from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, utc_now
@@ -46,9 +50,16 @@ QPushButton { min-width: 78px; }
 """
 
 
+class _Bridge(QObject):
+    """Brings results from worker threads back to the GUI thread."""
+    done = Signal(object, object)          # (callback, result)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._bridge = _Bridge()
+        self._bridge.done.connect(lambda cb, res: cb(res))
         self.setWindowTitle(f"tttlog {__version__}")
         self.resize(1100, 720)
         self.setStyleSheet(STYLE)
@@ -109,6 +120,8 @@ class MainWindow(QMainWindow):
         if self.cty_missing:
             self.banner("Country file missing or damaged: File ▸ Update country file  (using a small test file)", "orange")
         self._refresh_rates()
+        if not (os.environ.get("TTTLOG_OFFLINE") or os.environ.get("QT_QPA_PLATFORM") == "offscreen"):
+            QTimer.singleShot(5000, self.auto_update_check)
         if self.cluster_cfg.get("auto_connect"):
             self.cluster_connect(True)
         if self.net_cfg.get("enabled"):
@@ -222,6 +235,13 @@ class MainWindow(QMainWindow):
         self.spots_pane.spotActivated.connect(self.go_to_spot)
         self.spots_pane.colorsChanged.connect(self._save_colors)
         self.spots_pane.spotLastRequested.connect(self.spot_last_qso)
+        self.spots_pane.auto_send_filter = bool(self.cluster_cfg.get("auto_send_filter"))
+        self.spots_pane.set_filter(self.cluster_cfg.get("spot_filter"), self._home())
+        self.spots_pane.filterChanged.connect(self._on_spot_filter_changed)
+        self.spots_pane.filterSendRequested.connect(self.send_filter_to_cluster)
+        self.cluster_kind = ""                      # detected from the login banner
+        self._cl_out: list[str] = []               # cluster text waiting to go to networked stations
+        self._cl_flush = QTimer(self, singleShot=True, interval=300, timeout=self._flush_cluster_share)
         self._spotted: set[tuple] = set()          # (call, band) we've spotted this session
         self._dock("Spots", self.spots_pane, Qt.LeftDockWidgetArea)
         self.splitDockWidget(self.dock_log, self.dock_spots, Qt.Horizontal)
@@ -241,6 +261,9 @@ class MainWindow(QMainWindow):
         self.net.peersChanged.connect(self._refresh_network_pane)
         self.net.stateChanged.connect(lambda _t: self._refresh_network_pane())
         self.net.talkReceived.connect(self._on_talk)
+        self.net.contestWarning.connect(self._on_contest_warning)
+        self.net.clusterLines.connect(self._on_shared_cluster_lines)
+        self.net.clusterCommand.connect(self._on_network_cluster_command)
         self.network_pane.talkSent.connect(self._send_talk)
         self._net_dirty = QTimer(self, singleShot=True, interval=300, timeout=self._on_net_log_changed)
         self._dock("Network", self.network_pane, Qt.RightDockWidgetArea)
@@ -309,6 +332,15 @@ class MainWindow(QMainWindow):
                              triggered=self.go_to_next_needed))
         cl.addAction(QAction("Search spots", self, shortcut="Ctrl+Shift+F",
                              triggered=self._focus_spot_search))
+        cl.addSeparator()
+        cl.addAction(QAction("Spotters: anywhere → my zone → my continent", self, shortcut="Ctrl+Shift+J",
+                             triggered=self.spots_pane.cycle_spotters))
+        cl.addAction(QAction("Skimmers: all → none → only", self, shortcut="Ctrl+Shift+K",
+                             triggered=self.spots_pane.cycle_skimmer))
+        cl.addAction(QAction("Send spot filter to the cluster", self, shortcut="Ctrl+Shift+L",
+                             triggered=self.send_filter_to_cluster))
+        cl.addAction(QAction("Show the cluster's filter (sh/filter)", self,
+                             triggered=lambda: self._cluster_command("sh/filter")))
         view = mb.addMenu("&View")
         for d in self.panes:
             view.addAction(d.toggleViewAction())
@@ -327,6 +359,9 @@ class MainWindow(QMainWindow):
             a.setData(pct)
             self.scale_menu.addAction(a)
         hlp = mb.addMenu("&Help")
+        hlp.addAction(QAction("Check for updates…", self, triggered=lambda: self.check_updates(quiet=False)))
+        hlp.addAction(QAction("tttlog on GitHub", self, triggered=lambda: QDesktopServices.openUrl(
+            QUrl(f"https://github.com/{updater.REPO}"))))
         hlp.addAction(QAction("About tttlog…", self, triggered=self.show_about))
 
     def _build_mode_menu(self, modes):
@@ -556,7 +591,7 @@ class MainWindow(QMainWindow):
         else:
             self.banner(f"Logged {q.call}  {q.country}  +{q.points}" + ("  (DUPE)" if q.is_dupe else ""))
         if (not self.run_mode and not q.is_dupe and self.cluster_cfg.get("auto_spot_sp")
-                and self.cluster.is_connected() and (q.call, q.band) not in self._spotted):
+                and self._cluster_ready() and (q.call, q.band) not in self._spotted):
             self.spot_qso(q, auto=True)
 
     def wipe(self):
@@ -714,6 +749,7 @@ class MainWindow(QMainWindow):
                 self.qsos = self.engine.rescore(self.qsos)
                 self._refresh_log()
             self._refresh_radio()
+            self.spots_pane.set_filter(self.spots_pane.spot_filter, self._home())
 
     def edit_macros(self):
         dlg = MacroDialog(self.macros, self)
@@ -779,18 +815,110 @@ class MainWindow(QMainWindow):
 
     def _on_cluster_state(self, text: str):
         self.telnet_pane.set_connected(self.cluster._want, text)
-        self.spots_pane.summary_lbl.setToolTip(text)
+        # tell networked stations whether they can use our connection
+        QTimer.singleShot(0, lambda: self.net.set_cluster_up(
+            self.cluster.is_connected() and bool(self.cluster_cfg.get("share_cluster", True))))
+        if not self.cluster._want:
+            QTimer.singleShot(0, self._show_cluster_source)
 
     def _on_cluster_line(self, text: str):
+        """A line from our own cluster connection."""
+        if not self.cluster_kind:
+            self.cluster_kind = detect_cluster_kind(text)
+        self._take_cluster_text(text)
+        if self.net.running and self.cluster_cfg.get("share_cluster", True):
+            self._cl_out.append(text)
+            if not self._cl_flush.isActive():
+                self._cl_flush.start()
+
+    def _take_cluster_text(self, text: str):
         self.telnet_pane.append_console(text)
         s = parse_spot(text, utc_now())
         if s:
             self.spots_pane.add_spot(s, self.engine, self.qsos)
             self._refresh_needed()
 
+    # -- shared cluster connection over the local network --------------------
+    def _flush_cluster_share(self):
+        lines, self._cl_out = self._cl_out[:200], self._cl_out[200:]
+        self.net.publish_cluster(lines)
+        if self._cl_out:
+            self._cl_flush.start()
+
+    def _using_network_cluster(self) -> dict | None:
+        """The networked station whose cluster we're using, if we are."""
+        if self.cluster.is_connected() or self.cluster._want or not self.cluster_cfg.get("use_network_cluster", True):
+            return None
+        return self.net.cluster_source() if self.net.running else None
+
+    def _on_shared_cluster_lines(self, src: str, lines: list):
+        if not self._using_network_cluster():
+            return
+        if not self.cluster_kind:
+            self.cluster_kind = next((k for k in map(detect_cluster_kind, lines) if k), "")
+        for text in lines:
+            self._take_cluster_text(text)
+
+    def _on_network_cluster_command(self, who: str, text: str):
+        if self.cluster.is_connected() and self.cluster_cfg.get("share_cluster", True):
+            self.cluster.send(text)
+            self.telnet_pane.append_console(f"> {text}   (from {who})")
+
+    def _show_cluster_source(self):
+        if self.cluster._want:
+            return
+        src = self._using_network_cluster()
+        self.telnet_pane.set_connected(False, f"Using {src['name']}'s cluster connection (local network)"
+                                       if src else "Not connected")
+
+    def _cluster_ready(self) -> bool:
+        return self.cluster.is_connected() or self._using_network_cluster() is not None
+
+    def _cluster_command(self, cmd: str) -> bool:
+        """Send to the cluster: our own connection, or a networked station's."""
+        if self.cluster.is_connected():
+            self.cluster.send(cmd)
+            self.telnet_pane.append_console(f"> {cmd}")
+            return True
+        src = self._using_network_cluster()
+        if src and self.net.send_cluster_command(cmd):
+            self.telnet_pane.append_console(f"> {cmd}   (via {src['name']})")
+            return True
+        self.banner("Not connected to the DX cluster (Ctrl+K), and no networked station is sharing one",
+                    "#ffd166")
+        return False
+
+    # -- spot filter ---------------------------------------------------------
+    def _home(self) -> Home:
+        hit = self.cty.lookup(self.station.call) if self.station.call not in ("", "N0CALL") else None
+        return Home(zone=self.station.cq_zone, cont=hit[0].continent if hit else "",
+                    country=hit[0].name if hit else "", prefix=hit[0].prefix if hit else "")
+
+    def _on_spot_filter_changed(self):
+        self.cluster_cfg["spot_filter"] = dict(self.spots_pane.spot_filter)
+        self.cluster_cfg["auto_send_filter"] = self.spots_pane.auto_send_filter
+        config.save_cluster(self.cluster_cfg)
+        self._refresh_needed()
+        desc = describe_filter(self.spots_pane.spot_filter, self.spots_pane.home)
+        self.banner(f"Spot filter: {desc or 'showing all spotters and skimmers'}")
+
+    def send_filter_to_cluster(self):
+        kind = self.cluster_cfg.get("cluster_type", "auto")
+        kind = self.cluster_kind if kind == "auto" else kind
+        if not self._cluster_ready():
+            self.banner("Not connected to the DX cluster (Ctrl+K), and no networked station is sharing one",
+                        "#ffd166")
+            return
+        cmds, notes = filter_commands(kind, self.spots_pane.spot_filter, self.spots_pane.home)
+        for i, c in enumerate(cmds):              # spaced out: some nodes drop commands sent together
+            QTimer.singleShot(700 * i, lambda c=c: self._cluster_command(c))
+        name = CLUSTER_KINDS.get(kind, "")
+        msg = (f"Sent filter to {name}: " + " · ".join(cmds)) if cmds else "Filter kept here only"
+        self.banner(msg + ("  —  " + "; ".join(notes) if notes else ""), "#ffd166" if notes else "")
+
     def spot_qso(self, q: QSO, auto: bool = False) -> bool:
         """Send call + frequency of q to the cluster."""
-        if not self.cluster.is_connected():
+        if not self._cluster_ready():
             self.banner("Not connected to the DX cluster (Ctrl+K to connect)", "#ffd166")
             return False
         try:
@@ -798,8 +926,8 @@ class MainWindow(QMainWindow):
         except ValueError as e:
             self.banner(f"Can't spot: {e}", "#ffd166")
             return False
-        self.cluster.send(cmd)
-        self.telnet_pane.append_console(f"> {cmd}")
+        if not self._cluster_command(cmd):
+            return False
         self._spotted.add((q.call, q.band))
         keep = self.banner_lbl.text() + "  ·  " if auto else ""
         self.banner(f"{keep}Spotted {q.call} on {q.freq_khz:.1f}" + (" (auto)" if auto else ""))
@@ -819,8 +947,7 @@ class MainWindow(QMainWindow):
     def _cluster_cmd(self):
         cmd = self.telnet_pane.cmd.text().strip()
         if cmd:
-            self.cluster.send(cmd)
-            self.telnet_pane.append_console(f"> {cmd}")
+            self._cluster_command(cmd)
         self.telnet_pane.cmd.clear()
 
     def go_to_spot(self, s):
@@ -861,7 +988,7 @@ class MainWindow(QMainWindow):
                 self.cluster_connect(True)
 
     def _refresh_needed(self):
-        self.needed_pane.update_data(self.qsos, self.spots_pane.spots.spots())
+        self.needed_pane.update_data(self.qsos, self.spots_pane.filtered_spots())
 
     def _save_colors(self):
         config.save_colors(self.colors)
@@ -957,7 +1084,10 @@ class MainWindow(QMainWindow):
 
     def _refresh_network_pane(self):
         me = {"name": self.net_cfg.get("station_name", ""), "status": dict(self.net.status), "direct": True}
-        self.network_pane.refresh(me, list(self.net.peers.values()) if self.net.running else [],
+        peers = [{**p, "warn": self.net.mismatch(p) if p.get("contest") or p.get("direct") else ""}
+                 for p in self.net.peers.values()] if self.net.running else []
+        self._show_cluster_source()
+        self.network_pane.refresh(me, peers,
                                   self.net.summary() if self.net.running
                                   else "Network off — Config ▸ Local network")
 
@@ -967,6 +1097,10 @@ class MainWindow(QMainWindow):
             return
         self.net.talk(text)
         self.network_pane.add_talk(self.net_cfg["station_name"], text)
+
+    def _on_contest_warning(self, text: str):
+        self.network_pane.add_talk("network", "⚠ " + text)
+        self.banner("⚠ " + text, "orange")
 
     def _on_talk(self, who: str, text: str):
         self.network_pane.add_talk(who, text)
@@ -991,19 +1125,111 @@ class MainWindow(QMainWindow):
             self.needed_pane.set_engine(self.engine)
             self.qsos = self.engine.rescore(self.qsos)
             self._refresh_log()
+        self.spots_pane.spots._spotter_cache.clear()
+        self.spots_pane.set_filter(self.spots_pane.spot_filter, self._home())
         self.banner(f"Country file updated ({len(self.cty.entities())} entities)")
 
     def show_about(self):
         import platform
         logs = self.log.path.parent if self.log else Path.home() / "Documents" / "tttlog"
         QMessageBox.about(self, "About tttlog", (
-            f"<b>tttlog {__version__}</b> (alpha)<br>"
+            f"<b>tttlog {updater.version_string()}</b> (alpha)<br>"
             f"Amateur radio contest logger<br><br>"
             f"Logs: {logs}<br>"
             f"Settings: {config.CONFIG_DIR}<br>"
             f"Country file: {data_file('cty.dat')}<br><br>"
             f"{platform.system()} {platform.release()} · Python {platform.python_version()}<br>"
             f"Please include this information in bug reports."))
+
+    # ---------------------------------------------------------- updates
+    def _bg(self, fn, callback):
+        """Run fn() off the GUI thread; callback(result or exception) runs on the GUI thread."""
+        def work():
+            try:
+                res = fn()
+            except Exception as e:                   # noqa: BLE001
+                res = e
+            self._bridge.done.emit(callback, res)
+        threading.Thread(target=work, daemon=True).start()
+
+    def auto_update_check(self):
+        """Quiet check at most once a day; only speaks up if there's something new."""
+        if time.time() - float(self.settings.value("last_update_check", 0) or 0) < 86400:
+            return
+        self.settings.setValue("last_update_check", time.time())
+        self.check_updates(quiet=True)
+
+    def check_updates(self, quiet: bool):
+        def done(rel):
+            if isinstance(rel, Exception) or rel is None:
+                if not quiet:
+                    QMessageBox.warning(self, "Check for updates",
+                                        f"Couldn't reach GitHub: {rel or 'no releases yet'}")
+                return
+            if not updater.is_newer(rel.version):
+                if not quiet:
+                    QMessageBox.information(self, "Check for updates",
+                                            f"You're up to date: tttlog {__version__}.")
+                return
+            box = QMessageBox(self)
+            box.setWindowTitle("Update available")
+            box.setText(f"<b>tttlog {rel.version}</b> is available. You have {__version__}.")
+            notes = rel.notes.strip()
+            box.setInformativeText(notes[:900] + ("…" if len(notes) > 900 else ""))
+            go = box.addButton("Update now", QMessageBox.AcceptRole)
+            box.addButton("Later", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is go:
+                self.install_update(rel)
+        self._bg(updater.fetch_latest, done)
+
+    def install_update(self, rel):
+        kind = updater.install_kind()
+        if kind == "git":
+            self.banner("Updating from GitHub (git pull)…", "orange")
+
+            def pulled(res):
+                if isinstance(res, Exception):
+                    out = getattr(res, "output", "") or str(res)
+                    self.banner("")
+                    QMessageBox.warning(self, "Update failed", out[-1500:])
+                    return
+                self.banner("Update installed")
+                if QMessageBox.question(self, "Updated", "Update installed. Restart tttlog now?") \
+                        == QMessageBox.Yes:
+                    updater.restart_from_source()
+                    self.close()
+            self._bg(updater.update_git_checkout, pulled)
+            return
+        if not rel.asset_url:                    # no build for this computer: open the page
+            QDesktopServices.openUrl(QUrl(rel.url))
+            return
+        dest = Path.home() / "Downloads"
+        dest.mkdir(exist_ok=True)
+        dest = dest / rel.asset_name
+        prog = QProgressDialog(f"Downloading tttlog {rel.version}…", None, 0, 100, self)
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.show()
+
+        def progress(n, total):
+            self._bridge.done.emit(lambda _: prog.setValue(int(n * 100 / total)), None)
+
+        def downloaded(res):
+            prog.close()
+            if isinstance(res, Exception):
+                QMessageBox.warning(self, "Update failed", str(res))
+                return
+            if kind == "mac-app":
+                updater.stage_mac_update(res)
+                QMessageBox.information(self, "Update", "tttlog will close, update itself, and reopen.")
+                self.close()
+                QApplication.quit()
+            else:
+                updater.reveal(res)
+                QMessageBox.information(self, "Update downloaded",
+                                        f"Saved {res.name} to Downloads. Replace your current copy with it.")
+        self._bg(lambda: updater.download(rel.asset_url, dest, progress), downloaded)
 
     # ---------------------------------------------------------- panes
     @property
