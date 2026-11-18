@@ -27,6 +27,42 @@ CABRILLO_MODE = {"SSB": "PH", "USB": "PH", "LSB": "PH", "AM": "PH", "FM": "FM",
                  "CW": "CW", "RTTY": "RY", "FT8": "DG", "FT4": "DG", "PSK31": "DG"}
 
 
+# Where a band button puts you the first time (after that, back where you last
+# were on that band in that kind of mode). Usual calling / activity spots.
+BAND_START_KHZ = {
+    "CW":   {"160m": 1820, "80m": 3525, "60m": 5332, "40m": 7025, "30m": 10110, "20m": 14025,
+             "17m": 18080, "15m": 21025, "12m": 24900, "10m": 28025, "6m": 50090, "2m": 144050,
+             "70cm": 432100},
+    "SSB":  {"160m": 1850, "80m": 3800, "60m": 5330.5, "40m": 7200, "20m": 14250, "17m": 18130,
+             "15m": 21300, "12m": 24950, "10m": 28400, "6m": 50125, "2m": 144200, "70cm": 432100},
+    "AM":   {"160m": 1885, "80m": 3885, "40m": 7290, "20m": 14286, "10m": 29000, "6m": 50400},
+    "FM":   {"10m": 29600, "6m": 52525, "2m": 146520, "70cm": 446000},
+    "RTTY": {"80m": 3580, "40m": 7080, "20m": 14080, "15m": 21080, "10m": 28080},
+    "DIGI": {"160m": 1840, "80m": 3573, "60m": 5357, "40m": 7074, "30m": 10136, "20m": 14074,
+             "17m": 18100, "15m": 21074, "12m": 24915, "10m": 28074, "6m": 50313, "2m": 144174,
+             "70cm": 432174},
+}
+
+
+def mode_group(mode: str) -> str:
+    """Which BAND_START_KHZ table a mode uses (FT8, FT4, PSK... are all DIGI)."""
+    m = (mode or "").upper()
+    if m in ("USB", "LSB", "SSB", "PH"):
+        return "SSB"
+    return m if m in BAND_START_KHZ else "DIGI"
+
+
+def band_start_khz(band: str, mode: str) -> float | None:
+    """A sensible frequency on `band` for `mode` (falls back to the CW end, then the band edge)."""
+    table = BAND_START_KHZ[mode_group(mode)]
+    if band in table:
+        return float(table[band])
+    if band in BAND_START_KHZ["CW"]:                  # e.g. SSB on 30m, FM on 40m
+        return float(BAND_START_KHZ["CW"][band])
+    edge = next((lo for name, lo, _hi in BANDS_KHZ if name == band), None)
+    return float(edge) if edge is not None else None
+
+
 def band_from_khz(khz: float) -> str | None:
     for name, lo, hi in BANDS_KHZ:
         if lo <= khz <= hi:

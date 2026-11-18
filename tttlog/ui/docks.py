@@ -9,7 +9,8 @@ other window. The ⇲ button (or double-clicking the title bar) docks it again.
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QDockWidget, QFrame, QHBoxLayout, QLabel, QScrollArea, QToolButton, QWidget
+from PySide6.QtWidgets import (QDockWidget, QFrame, QHBoxLayout, QLabel, QScrollArea, QSizePolicy,
+                               QToolButton, QWidget)
 
 FLOAT_FLAGS = (Qt.Window | Qt.CustomizeWindowHint | Qt.WindowTitleHint |
                Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint |
@@ -24,6 +25,8 @@ class PaneTitleBar(QWidget):
         h.setContentsMargins(6, 1, 2, 1)
         h.setSpacing(2)
         self.title = QLabel(dock.windowTitle())
+        self.title.setMinimumWidth(0)                # a narrow pane clips its title, not the other panes
+        self.title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         f = self.title.font(); f.setBold(True); self.title.setFont(f)
         h.addWidget(self.title, 1)
         self.min_btn = self._btn("–", "Minimize (roll up to the title bar)", dock.toggle_minimized)

@@ -22,7 +22,7 @@ from ..core.cluster import (CLUSTER_KINDS, Home, describe_filter, detect_cluster
 from .. import __version__, updater
 from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
 from ..core.db import Log
-from ..core.models import QSO, band_from_khz, utc_now
+from ..core.models import QSO, band_from_khz, band_start_khz, mode_group, utc_now
 from ..core.netsync import LogSync
 from ..export.adif import export_adif, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
@@ -32,12 +32,13 @@ from .dialogs import (ClusterDialog, EditQsoDialog, MacroDialog, NetworkDialog, 
 from .docks import Pane
 from .needed_pane import NeededPane
 from .network_pane import NetNode, NetworkPane
+from .band_pane import BandPane
 from .rate_pane import RatePane
 from .wsjtx_listener import WsjtxListener
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
 DISPLAY_SIZES = (70, 80, 90, 100, 110, 125, 150)   # View ▸ Display size, % (applied at start)
-LAYOUT_VERSION = "6"     # bump when panes are added/renamed so old saved layouts are dropped
+LAYOUT_VERSION = "7"     # bump when panes are added/renamed so old saved layouts are dropped
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
 OP_RE = re.compile(r"^[A-Z0-9]{3,}(/[A-Z0-9]+)*$")
 
@@ -190,7 +191,14 @@ class MainWindow(QMainWindow):
         v.setSpacing(4)
         w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self.setDockNestingEnabled(True)
+        # Bands: a narrow column of band buttons down the left edge
+        self.band_pane = BandPane()
+        self.band_pane.bandClicked.connect(self.go_to_band)
+        self.band_pane.set_bands(["160m", "80m", "40m", "20m", "15m", "10m"])
+        self._dock("Bands", self.band_pane, Qt.LeftDockWidgetArea)
+        self.dock_bands.widget().setMinimumWidth(56)
         self._dock("Entry", w, Qt.LeftDockWidgetArea, closable=False, scroll=False)   # sized to its contents
+        self.splitDockWidget(self.dock_bands, self.dock_entry, Qt.Horizontal)
 
         # Log pane
         self.log_table = QTableWidget(0, 9)
@@ -409,6 +417,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_radio(self):
         band = band_from_khz(self.freq_khz) or "?"
+        self.band_pane.set_current(band)
         self.radio_lbl.setText(f"{self.freq_khz:,.1f} kHz  {band}  {self.mode}  "
                                f"[{'RUN' if self.run_mode else 'S&P'}]  OP {self.current_op}")
         page = self.macros.get(self.mode, self.macros.get("SSB"))["RUN" if self.run_mode else "SP"]
@@ -459,6 +468,7 @@ class MainWindow(QMainWindow):
         self.engine = ContestEngine(rules, self.cty, self.station)
         self.mode = rules["modes"][0]
         self._build_mode_menu(rules["modes"])
+        self.band_pane.set_bands(list(rules["bands"]))
         self.rst.setText(self.engine.default_rst(self.mode))
         self.exch.setPlaceholderText(" ".join(f.get("label", f["name"]).upper()
                                               for f in self.engine.rcvd_fields))
@@ -626,8 +636,24 @@ class MainWindow(QMainWindow):
             self.banner(f"{khz} kHz is outside the ham bands", "#ffd166")
             return
         self.freq_khz = khz
+        self.settings.setValue("freq_khz", khz)
+        self.settings.setValue(f"band_freq/{band_from_khz(khz)}/{mode_group(self.mode)}", khz)
         self._refresh_radio()
         self._live_check(self.call.text().strip().upper())
+
+    def go_to_band(self, band: str):
+        """Band button: back to where you last were on that band in this kind of
+        mode, else a usual spot. (With radio control this will tune the radio.)"""
+        saved = self.settings.value(f"band_freq/{band}/{mode_group(self.mode)}")
+        try:
+            khz = float(saved) if saved is not None else None
+        except (TypeError, ValueError):
+            khz = None
+        if khz is None or band_from_khz(khz) != band:
+            khz = band_start_khz(band, self.mode)
+        if khz is not None:
+            self.set_freq(khz)
+        self.call.setFocus()
 
     def ask_freq(self):
         khz, ok = QInputDialog.getDouble(self, "Frequency", "kHz", self.freq_khz, 1800, 450000, 1)
@@ -1248,7 +1274,8 @@ class MainWindow(QMainWindow):
         right = [self.dock_score, self.dock_check_partial, self.dock_rate]
         # Set the column split from the left side (resizing the right column is
         # ignored), in real pixels: small ratios like [2, 3] reset the column width.
-        left = self.width() * 62 // 100
+        self.resizeDocks([self.dock_bands], [self.dock_bands.content.sizeHint().width() + 8], Qt.Horizontal)
+        left = self.width() * 62 // 100 - self.dock_bands.width()
         self.resizeDocks([self.dock_log, self.dock_spots], [left * 2 // 5, left * 3 // 5], Qt.Horizontal)
         self.resizeDocks([self.dock_entry], [left], Qt.Horizontal)
         h = self.height()                               # small screens: shrink Score/Partial first

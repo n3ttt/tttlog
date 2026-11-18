@@ -181,6 +181,10 @@ Operators: type **OPON** + Enter in the call field (or **OPON K3ABC**, or Operat
 
 The network name keeps separate groups apart; it isn't a password. Use it only on a network you trust.
 
+## Band buttons
+
+The **Bands** column on the left has a button for each band in the open log's contest; the lit one is the band you're on. Clicking a band takes you back to where you last were on it in the same kind of mode (CW, SSB, digital...), or the first time to a usual spot (for example 14025 CW, 14250 SSB, 14074 FT8). For now this sets tttlog's frequency; with radio control it will tune the radio.
+
 ## WSJT-X (FT8 / FT4)
 
 tttlog can log the QSOs you log in WSJT-X (or JTDX / MSHV). It only listens; it doesn't control WSJT-X.
