@@ -270,7 +270,9 @@ If GridTracker or JTAlert already uses port 2237, set WSJT-X and every listening
 
 Each contest is one YAML file in `tttlog/contests/rules/`. Add a new file to add a contest; nothing needs recompiling.
 
-Included: `GENERAL` (everyday log), `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`, `NAQP-CW`, `NAQP-SSB`, `CWOPS-CWT`, `ARRL-SS-CW`, `ARRL-SS-SSB` (Sweepstakes), `ARRL-10`, `ARRL-160`, `ARRL-FD` (Field Day).
+Included: `GENERAL` (everyday log), `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`, `NAQP-CW`, `NAQP-SSB`, `CWOPS-CWT`, `ARRL-SS-CW`, `ARRL-SS-SSB` (Sweepstakes), `ARRL-10`, `ARRL-160`, `ARRL-FD` (Field Day), and the state QSO parties `PA-QP` (Pennsylvania), `NEQP` (New England), `DE-QP` (Delaware), `MDC-QP` (Maryland-DC).
+
+**QSO parties** work from either side. tttlog picks the rules by the state in your station profile: in the party's state you send your **QSO party county** (set it in the station profile, in that party's abbreviation, e.g. NDE, LAN, NHHIL, ANA) and work everyone; outside it you send your state or section and only QSOs with in-state stations count. County lists come from each party's official rules. A county-line station is logged like `CAR/LEH` (counted once per county), and a mobile can be worked again in each new county. Station-category, power and bonus multipliers aren't added to the claimed score: the sponsors add them from your entry form.
 
 Set your **ARRL section**, **Sweepstakes check and precedence**, **CWops member number** and **Field Day class** in Config ▸ Station profile; NAQP and CWT send the first word of your name. Serial numbers (Sweepstakes) count up by themselves, and the Entry pane's *Sent:* line shows the next one. Contests without a signal report hide the RST box. Rules files can use exchange fields checked against lists (`in: sections`, `states_provinces`...), points by mode or by location, mults per band, per mode or once, and mults limited to some countries or a continent. Check each contest's current official rules before you rely on it: ARRL and others change details from year to year.
 

@@ -32,6 +32,7 @@ class Station:
     ss_precedence: str = "A"   # Sweepstakes precedence: Q A B U M S
     cwops: str = ""            # CWops member number (CWT); blank sends your state
     fd_class: str = ""         # Field Day class, e.g. 1D, 2A
+    county: str = ""           # QSO parties: your county, in that party's abbreviation (e.g. NDE)
 
 
 def list_contests() -> list[dict]:
@@ -67,6 +68,14 @@ class Score:
 
 class ContestEngine:
     def __init__(self, rules: dict, cty: CtyDat, station: Station):
+        # QSO parties: the same contest has different rules inside and outside the state
+        # (in_state: / out_state: blocks), picked by the station profile's state.
+        self.in_state = None
+        qp = rules.get("qso_party")
+        if qp:
+            states = qp["state"] if isinstance(qp["state"], list) else [qp["state"]]
+            self.in_state = (station.state or "").upper() in states
+            rules = {**rules, **(rules.get("in_state" if self.in_state else "out_state") or {})}
         self.rules = rules
         self.cty = cty
         self.station = station
@@ -95,6 +104,8 @@ class ContestEngine:
                 v = str(getattr(self.station, src, "") or "")
                 if not v and f.get("or_station"):           # e.g. CWT: member number, else state
                     v = str(getattr(self.station, f["or_station"], "") or "")
+                if not v and f.get("default"):              # e.g. QSO parties: DX
+                    v = str(f["default"])
                 if f.get("first_word") and v:               # NAQP / CWT: first name only
                     v = v.split()[0]
                 v = v.upper()
@@ -133,7 +144,15 @@ class ContestEngine:
             out[f["name"]] = toks[i] if i < len(toks) else ""
         return out
 
+    @staticmethod
+    def _parts(f: dict, v: str) -> list[str]:
+        """A county-line value 'CAR/LEH' is two counties (fields marked county_line)."""
+        return [x for x in v.split("/") if x] if f.get("county_line") and "/" in v else [v]
+
     def _ok_value(self, f: dict, v: str) -> bool:
+        if f.get("county_line") and "/" in v:
+            parts = self._parts(f, v)
+            return len(parts) > 1 and all(self._ok_value({**f, "county_line": False}, x) for x in parts)
         """A field's value is fine if it matches its pattern or is in its list (either one,
         when a field has both: e.g. 10 m takes a state OR a serial number)."""
         checks = []
@@ -178,6 +197,13 @@ class ContestEngine:
 
     # ---- dupes ----------------------------------------------------------
     def _dupe_key(self, q: QSO):
+        key = self._dupe_key_base(q)
+        wf = self.rules.get("dupe_with_field")          # QSO parties: a mobile in a new county is new
+        if key is not None and wf:
+            key = key + (self.parse_rcvd(q.exch_rcvd).get(wf, ""),)
+        return key
+
+    def _dupe_key_base(self, q: QSO):
         rule = self.rules.get("dupe", "per_band")
         if rule == "none":
             return None
@@ -220,14 +246,32 @@ class ContestEngine:
             q.cq_zone = hit[1] if hit else None
         key = self._dupe_key(q)
         q.is_dupe = key is not None and any(self._dupe_key(p) == key for p in prior if not p.is_dupe)
-        q.points = 0 if (q.is_dupe or not self.is_valid(q)) else self._points(ent, q)
+        q.points = 0 if (q.is_dupe or not self.is_valid(q)) else self._points(ent, q) * self._line_count(q)
         return q
 
     def is_valid(self, q: QSO) -> bool:
         if q.band not in self.rules["bands"]:
             return False
-        excl = self.rules.get("valid_qso", {}).get("exclude_entities", [])
-        return q.country not in excl
+        vq = self.rules.get("valid_qso", {})
+        if q.country in vq.get("exclude_entities", []):
+            return False
+        fi = vq.get("field_in")                          # QSO parties from outside: only in-state stations
+        if fi:
+            f = next((x for x in self.rcvd_fields if x["name"] == fi["field"]), {"name": fi["field"]})
+            v = self.parse_rcvd(q.exch_rcvd).get(fi["field"], "")
+            allowed = locations.values(fi["in"])
+            if not v or not all(x in allowed for x in self._parts({**f, "county_line": True}, v)):
+                return False
+        return True
+
+    def _line_count(self, q: QSO) -> int:
+        """A county-line QSO counts once per county (the rules say log one QSO per county)."""
+        vals = self.parse_rcvd(q.exch_rcvd)
+        n = 1
+        for f in self.rcvd_fields:
+            if f.get("county_line"):
+                n = max(n, len(self._parts(f, vals.get(f["name"], ""))))
+        return n
 
     def _points(self, ent, q: QSO | None = None) -> int:
         p = self.rules["points"]
@@ -279,18 +323,22 @@ class ContestEngine:
                 v = self.parse_rcvd(q.exch_rcvd).get(m["type"])
             if v in (None, "", "?"):
                 continue
-            if m.get("in") and v not in locations.values(m["in"]):
-                continue                                 # e.g. NAQP: a state, not a DX prefix
-            scope = m.get("scope", "per_band")
-            if scope == "per_band":
-                key = (q.band, v)
-            elif scope == "per_mode":
-                key = (mode_group(q.mode), v)
-            elif scope == "per_band_mode":
-                key = (q.band, mode_group(q.mode), v)
-            else:
-                key = (v,)
-            out.append((m.get("label", m["type"]), key))
+            vs = [x for x in str(v).split("/") if x] if isinstance(v, str) and "/" in v else [v]
+            for v in vs:                                 # a county line counts each county
+                if m.get("in") and v not in locations.values(m["in"]):
+                    continue                             # e.g. NAQP: a state, not a DX prefix
+                if m.get("take"):
+                    v = v[:int(m["take"])]               # NEQP: NHHIL counts as the state NH
+                scope = m.get("scope", "per_band")
+                if scope == "per_band":
+                    key = (q.band, v)
+                elif scope == "per_mode":
+                    key = (mode_group(q.mode), v)
+                elif scope == "per_band_mode":
+                    key = (q.band, mode_group(q.mode), v)
+                else:
+                    key = (v,)
+                out.append((m.get("label", m["type"]), key))
         return out
 
     def worked_before(self, call: str, log: list[QSO]) -> list[QSO]:

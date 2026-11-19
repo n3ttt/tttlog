@@ -102,13 +102,15 @@ class StationDialog(QDialog):
         self.cwops = QLineEdit(st.cwops); self.cwops.setPlaceholderText("blank: send your state")
         self.cwops.setToolTip("CWops member number, sent in the CWT")
         self.fd_class = QLineEdit(st.fd_class); self.fd_class.setPlaceholderText("e.g. 1D, 2A")
+        self.county = QLineEdit(st.county); self.county.setPlaceholderText("e.g. NDE, ANA, NHHIL")
+        self.county.setToolTip("QSO parties in your own state: your county, in that party's abbreviation")
         for lbl, w in [("Call", self.call), ("Operator", self.op), ("State/Prov", self.state),
                        ("CQ zone", self.zone), ("ITU zone", self.itu), ("Grid", self.grid),
                        ("Name", self.name), ("Address (use | between lines)", self.addr),
                        ("Club", self.club), ("Email", self.email), ("US license class", self.lic),
                        ("ARRL section", self.section), ("Sweepstakes check", self.ss_check),
                        ("Sweepstakes precedence", self.ss_prec), ("CWops member #", self.cwops),
-                       ("Field Day class", self.fd_class)]:
+                       ("Field Day class", self.fd_class), ("QSO party county", self.county)]:
             f.addRow(lbl, w)
         f.addRow(_buttons(self))
 
@@ -122,7 +124,7 @@ class StationDialog(QDialog):
                        license_class=self.lic.currentData() or "",
                        section=self.section.text().upper().strip(), ss_check=self.ss_check.text().strip(),
                        ss_precedence=self.ss_prec.currentData(), cwops=self.cwops.text().strip(),
-                       fd_class=self.fd_class.text().upper().strip())
+                       fd_class=self.fd_class.text().upper().strip(), county=self.county.text().upper().strip())
 
 
 class NewLogDialog(QDialog):

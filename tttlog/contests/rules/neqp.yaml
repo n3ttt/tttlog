@@ -1,0 +1,46 @@
+# New England QSO Party (first full weekend of May). From neqp.org/rules (updated
+# 4/27/2026): check them before the party. 80-10 m, CW and phone.
+# New England stations send RST + county (state first, e.g. NHHIL; CT uses its Regional
+# Councils of Government); others send RST + state/province or DX. Phone 1 point, CW
+# (and digital) 2. Work stations once per band and mode; mobiles again in each new
+# county. County line: log one QSO per county (CTCAP/CTNAU here).
+# Multipliers are counted once here (the rules don't say per band); DC counts as MD.
+id: NEQP
+name: New England QSO Party
+cabrillo_contest: NEQP
+modes: [CW, SSB]
+bands: [80m, 40m, 20m, 15m, 10m]
+duration_hours: 20
+qso_party: {state: [CT, MA, ME, NH, RI, VT]}
+
+dupe: per_band_mode
+dupe_with_field: loc
+
+points: {type: per_mode, values: {CW: 2, SSB: 1, DIGI: 2}}
+
+in_state:
+  location: county
+  exchange:
+    sent:
+      - {name: rst, default: {CW: "599", default: "59"}}
+      - {name: loc, label: "CNTY", from_station: county}
+    rcvd:
+      - {name: rst, default: {CW: "599", default: "59"}}
+      - {name: loc, label: "CNTY/ST/PROV/DX", in: [neqp_counties, states_provinces, dx], county_line: true}
+  mults:
+    - {type: loc, in: states_provinces, scope: overall, label: "States/Prov"}
+    - {type: loc, in: neqp_counties, take: 2, scope: overall, label: "States/Prov"}
+    - {type: dxcc, exclude_entities: ["United States", "Canada", "Alaska", "Hawaii"], scope: overall, label: "DXCC"}
+
+out_state:
+  location: state
+  exchange:
+    sent:
+      - {name: rst, default: {CW: "599", default: "59"}}
+      - {name: loc, label: "ST/PROV", from_station: state, default: DX}
+    rcvd:
+      - {name: rst, default: {CW: "599", default: "59"}}
+      - {name: loc, label: "CNTY", in: neqp_counties, county_line: true}
+  valid_qso: {field_in: {field: loc, in: neqp_counties}}
+  mults:
+    - {type: loc, in: neqp_counties, scope: overall, label: "Counties"}

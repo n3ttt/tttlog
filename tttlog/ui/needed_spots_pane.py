@@ -89,8 +89,7 @@ class NeededSpotsPane(QWidget):
         if engine:
             for b in engine.rules.get("bands", []):
                 self.band_box.addItem(b)
-            for m in engine.rules.get("mults", []):
-                label = m.get("label", m["type"])
+            for label in dict.fromkeys(m.get("label", m["type"]) for m in engine.rules.get("mults", [])):
                 self.mult_box.addItem(label, label)
         self.band_box.setCurrentIndex(max(0, self.band_box.findText(cur_band)))
         self.mult_box.setCurrentIndex(max(0, self.mult_box.findData(cur_mult)))

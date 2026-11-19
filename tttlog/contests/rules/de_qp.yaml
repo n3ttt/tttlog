@@ -1,0 +1,45 @@
+# Delaware QSO Party (first full weekend of May; First State ARC). From the fsarc.org
+# rules (the 2024 page): check them before the party. HF except WARC, plus 6 m and up.
+# Delaware stations send RST + county (NDE, KDE, SDE); others send RST + state, province
+# or DX. Inside DE: phone 1, CW and digital 2; outside DE: phone 10, CW and digital 20.
+# Multipliers count once per band. Work stations once per band and mode; mobiles again
+# in each new county. Not counted here: the power multiplier (x1 / x2 / x3) and the
+# 50-point electronic log bonus. FT8/FT4 uses the Field Day overlay (1A DE etc).
+id: DE-QP
+name: Delaware QSO Party
+cabrillo_contest: DE-QSO-PARTY
+modes: [CW, SSB, FT8, FT4, RTTY]
+bands: [160m, 80m, 40m, 20m, 15m, 10m, 6m, 2m, 70cm]
+duration_hours: 24
+qso_party: {state: DE}
+
+dupe: per_band_mode
+dupe_with_field: loc
+
+in_state:
+  location: county
+  points: {type: per_mode, values: {CW: 2, SSB: 1, DIGI: 2}}
+  exchange:
+    sent:
+      - {name: rst, default: {CW: "599", RTTY: "599", default: "59"}}
+      - {name: loc, label: "CNTY", from_station: county}
+    rcvd:
+      - {name: rst, default: {CW: "599", RTTY: "599", default: "59"}}
+      - {name: loc, label: "ST/PROV/DX", in: [states_provinces, de_counties], pattern: '^[A-Z0-9]{1,5}$'}
+  mults:
+    - {type: loc, in: states_provinces, scope: per_band, label: "States/Prov"}
+    - {type: dxcc, exclude_entities: ["United States", "Canada", "Alaska", "Hawaii"], scope: per_band, label: "DXCC"}
+
+out_state:
+  location: state
+  points: {type: per_mode, values: {CW: 20, SSB: 10, DIGI: 20}}
+  exchange:
+    sent:
+      - {name: rst, default: {CW: "599", RTTY: "599", default: "59"}}
+      - {name: loc, label: "ST/PROV", from_station: state, default: DX}
+    rcvd:
+      - {name: rst, default: {CW: "599", RTTY: "599", default: "59"}}
+      - {name: loc, label: "CNTY", in: de_counties}
+  valid_qso: {field_in: {field: loc, in: de_counties}}
+  mults:
+    - {type: loc, in: de_counties, scope: per_band, label: "Counties"}

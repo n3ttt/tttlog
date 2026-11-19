@@ -1,0 +1,43 @@
+# Maryland-DC QSO Party (second Saturday of August, 1400-0400 UTC; Anne Arundel Radio
+# Club). From the rules revised 06 Aug 2024: check them before the party.
+# Exchange is just your location: MDC stations their county/city (table 1, e.g. ANA,
+# BAL, WDC); others their state, province, or country. CW 3 points, phone 1. Work
+# stations once per band and mode; a station that moves to a new location is new.
+# Multipliers count once. Not counted here: station-category and power multipliers,
+# and the W3VPR / 13-county / all-25 bonuses.
+id: MDC-QP
+name: Maryland-DC QSO Party
+cabrillo_contest: MDC-QSO-PARTY
+modes: [CW, SSB]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 14
+qso_party: {state: [MD, DC]}
+
+dupe: per_band_mode
+dupe_with_field: loc
+
+points: {type: per_mode, values: {CW: 3, SSB: 1}}
+
+in_state:
+  location: county
+  exchange:
+    sent:
+      - {name: loc, label: "CNTY", from_station: county}
+    rcvd:
+      - {name: loc, label: "CNTY/ST/PROV/DX", in: [mdc_counties, states_provinces], pattern: '^[A-Z0-9]{1,6}$'}
+  mults:
+    - {type: loc, in: mdc_counties, scope: overall, label: "Counties"}
+    - {type: loc, in: states_no_md, scope: overall, label: "States"}
+    - {type: loc, in: provinces, scope: overall, label: "Provinces"}
+    - {type: dxcc, exclude_entities: ["United States", "Canada", "Alaska", "Hawaii"], scope: overall, label: "DXCC"}
+
+out_state:
+  location: state
+  exchange:
+    sent:
+      - {name: loc, label: "ST/PROV", from_station: state, default: DX}
+    rcvd:
+      - {name: loc, label: "CNTY", in: mdc_counties}
+  valid_qso: {field_in: {field: loc, in: mdc_counties}}
+  mults:
+    - {type: loc, in: mdc_counties, scope: overall, label: "Counties"}

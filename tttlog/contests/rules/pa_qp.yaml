@@ -1,0 +1,45 @@
+# Pennsylvania QSO Party (2nd full weekend of October). From the 2026 rules
+# (paqso.org, revision 09/20/26): check them before the party.
+# PA stations send serial + county; others send serial + ARRL/RAC section (or DX).
+# CW 2 points, phone 1. Work stations once per band and mode; mobiles and rovers again
+# in each new county. County line: CAR/LEH (logged as one QSO per county).
+# Not counted here: QRP x2, bonus stations, mobile/rover bonuses, the automatic EPA/WPA mults.
+id: PA-QP
+name: Pennsylvania QSO Party
+cabrillo_contest: PA-QSO-PARTY
+modes: [CW, SSB]
+bands: [160m, 80m, 40m, 20m, 15m, 10m, 6m, 2m]
+duration_hours: 21
+qso_party: {state: PA}
+
+dupe: per_band_mode
+dupe_with_field: loc
+
+points: {type: per_mode, values: {CW: 2, SSB: 1}}
+
+in_state:
+  location: county
+  exchange:
+    sent:
+      - {name: nr, serial: true}
+      - {name: loc, label: "CNTY", from_station: county}
+    rcvd:
+      - {name: nr, label: "NR", pattern: '^\d{1,5}$'}
+      - {name: loc, label: "CNTY/SEC/DX", in: [pa_counties, sections, dx], county_line: true}
+  mults:
+    - {type: loc, in: pa_counties, scope: overall, label: "Counties"}
+    - {type: loc, in: sections, scope: overall, label: "Sections"}
+    - {type: loc, in: dx, scope: overall, label: "DX"}
+
+out_state:
+  location: section
+  exchange:
+    sent:
+      - {name: nr, serial: true}
+      - {name: loc, label: "SEC", from_station: section, default: DX}
+    rcvd:
+      - {name: nr, label: "NR", pattern: '^\d{1,5}$'}
+      - {name: loc, label: "CNTY", in: pa_counties, county_line: true}
+  valid_qso: {field_in: {field: loc, in: pa_counties}}
+  mults:
+    - {type: loc, in: pa_counties, scope: overall, label: "Counties"}

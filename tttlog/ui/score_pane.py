@@ -20,7 +20,7 @@ def short_label(label: str) -> str:
 
 def score_text(engine, s) -> tuple[str, str, str]:
     """(table, score line, mult-value line) as plain text; empty lines when not used."""
-    mult_labels = [m.get("label", m["type"]) for m in engine.rules.get("mults", [])]
+    mult_labels = list(dict.fromkeys(m.get("label", m["type"]) for m in engine.rules.get("mults", [])))
     per_band = {m.get("label", m["type"]) for m in engine.rules.get("mults", [])
                 if m.get("scope", "per_band") == "per_band"}
     general = engine.is_general

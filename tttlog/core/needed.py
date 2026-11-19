@@ -29,7 +29,13 @@ class NeedRow:
 
 
 def mult_defs(engine) -> list[dict]:
-    return list(engine.rules.get("mults", []))
+    """One per label (NEQP counts states two ways under one label: keep the first)."""
+    seen, out = set(), []
+    for m in engine.rules.get("mults", []):
+        lbl = m.get("label", m["type"])
+        if lbl not in seen:
+            seen.add(lbl); out.append(m)
+    return out
 
 
 def universe(engine, mdef: dict, qsos: list[QSO]) -> list[tuple[object, str]]:
