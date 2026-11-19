@@ -114,7 +114,7 @@ def test_general_log_ui(app, tmp_path, monkeypatch):
     db = tmp_path / "general_log.db"
     l = Log(db); l.set_meta("contest_id", "GENERAL"); l.close()
     w.open_log(db)
-    assert w.score_table.isColumnHidden(2)
+    assert "Pts" not in w.score_pane.table and "QSOs" in w.score_pane.table   # no points in a general log
 
     w.call.setText("DL1ABC"); w._live_check("DL1ABC")
     assert "NEW ONE" in w.banner_lbl.text()

@@ -104,6 +104,10 @@ Panes stop at the edges of the window: you can't drag or resize one past them. I
 
 **Layouts are kept, per operator.** Where every pane is (in grid cells), which are rolled up, closed, or popped out is saved automatically a moment after every change (so a crash or power cut doesn't lose it) and comes back next time, the same on Mac, Windows and Linux. Each operator has their own: **OPON** saves the outgoing operator's layout and switches to the incoming operator's (the first time someone logs on, they start from the current layout). View ▸ **Save layout for <op>** saves it right away; View ▸ **Reset to the default layout** goes back to tttlog's arrangement. With Local network on, each operator's layout and US license class also follow them to the other stations: when it's saved at one station (OPON away, closing tttlog, Save layout, or setting their class), it's sent to every linked station, and **OPON** there brings it up. A station that links later is caught up. Only the pane arrangement travels, not the window's size or position, since every computer's screen is different; the newest saved copy wins.
 
+## Score pane
+
+Laid out like N1MM's and Win-Test's: one row per band you've worked (QSOs, points, and a column for each kind of mult, e.g. ZN and Cty in CQ WW), a **Total** row, the claimed **Score** in large type, and **1 Mult = N Q's** (how many QSOs one more multiplier is worth, to help decide whether to chase it). Dupes and QSOs that don't count are noted underneath. In a General log it shows QSOs and DXCC.
+
 ## Rate pane
 
 Shows the rate over the last 10 and last 100 QSOs (per hour, measured to now), the QSO counts for the last 60 and last 15 minutes, and the best 60-minute run so far.

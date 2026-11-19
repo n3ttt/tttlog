@@ -244,6 +244,7 @@ class ContestEngine:
                     s.mult_sets.setdefault(lbl, set()).add(key)
                     if len(key) == 2:
                         bb["mults"] += 1
+                        bb.setdefault("by_mult", {})[lbl] = bb.get("by_mult", {}).get(lbl, 0) + 1
         s.mults = len(seen)
         return s
 

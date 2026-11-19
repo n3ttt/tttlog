@@ -38,6 +38,7 @@ from .needed_spots_pane import NeededSpotsPane
 from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
 from .rate_pane import RatePane
+from .score_pane import ScorePane
 from .rig_control import RigControl
 from .broadcast import Broadcaster
 from ..core import geo
@@ -283,13 +284,8 @@ class MainWindow(QMainWindow):
         self._dock("Log", self.log_table)
 
         # Score pane
-        self.score_table = QTableWidget(0, 4)
-        self.score_table.setHorizontalHeaderLabels(["Band", "QSOs", "Pts", "Mults"])
-        self.score_table.verticalHeader().setVisible(False)
-        self.score_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.score_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.score_table.verticalHeader().setDefaultSectionSize(22)
-        self._dock("Score", self.score_table)
+        self.score_pane = ScorePane()               # laid out like N1MM / Win-Test
+        self._dock("Score", self.score_pane)
 
         # Partials pane (SCP + log)
         self.partials = QListWidget()
@@ -626,9 +622,6 @@ class MainWindow(QMainWindow):
         self.rst.setText(self.engine.default_rst(self.mode))
         self.exch.setPlaceholderText(" ".join(f.get("label", f["name"]).upper()
                                               for f in self.engine.rcvd_fields))
-        general = self.engine.is_general
-        for c in (2, 3):                              # no points or band mults in a general log
-            self.score_table.setColumnHidden(c, general)
         self.sync = LogSync(self.log, self.node_id, self.net_cfg["station_name"])
         self.net.set_log(self.sync, cid)
         self.qsos = self.engine.rescore(self.log.all())
@@ -1134,14 +1127,7 @@ class MainWindow(QMainWindow):
                 self.score_lbl.setText(f"QSOs {s.qsos}  ·  DXCC {s.mults}")
             else:
                 self.score_lbl.setText(f"Q {s.qsos}  Pts {s.points}  Mult {s.mults}  =  {s.total:,}")
-            st = self.score_table
-            st.setRowCount(len(s.by_band) + 1)
-            for r, (band, b) in enumerate(s.by_band.items()):
-                for c, v in enumerate([band, b["qsos"], b["points"], b["mults"]]):
-                    st.setItem(r, c, QTableWidgetItem(str(v)))
-            for c, v in enumerate(["Total", s.qsos, s.points, s.mults]):
-                it = QTableWidgetItem(str(v)); f = QFont(); f.setBold(True); it.setFont(f)
-                st.setItem(len(s.by_band), c, it)
+            self.score_pane.update_score(self.engine, s)
         self._refresh_rates()
         self.spots_pane.reevaluate(self.engine, self.qsos)
         self._refresh_needed()
