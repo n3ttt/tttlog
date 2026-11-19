@@ -319,3 +319,28 @@ def load_keyer() -> dict:
 def save_keyer(cfg: dict) -> None:
     KEYER_FILE.parent.mkdir(parents=True, exist_ok=True)
     KEYER_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+# N1MM-compatible UDP (core/n1mm.py): RadioInfo for band decoders / GH Everyware band
+# following, and rotor commands (GH Everyware, N1MM-compatible rotor programs).
+N1MM_FILE = CONFIG_DIR / "n1mm.yaml"
+DEFAULT_N1MM = {
+    "radio": False,                       # send RadioInfo
+    "radio_targets": "127.0.0.1:12060",   # host:port, several with spaces
+    "rotor": False,                       # send rotor turn / stop (Alt+J, Alt+L, Ctrl+Alt+J)
+    "rotor_targets": "127.0.0.1:12040",
+    "rotor_name": "",                     # blank = every rotor that's ticked in GH Everyware
+    "bidirectional": False,
+}
+
+
+def load_n1mm() -> dict:
+    cfg = dict(DEFAULT_N1MM)
+    if N1MM_FILE.exists():
+        cfg.update(yaml.safe_load(N1MM_FILE.read_text()) or {})
+    return cfg
+
+
+def save_n1mm(cfg: dict) -> None:
+    N1MM_FILE.parent.mkdir(parents=True, exist_ok=True)
+    N1MM_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))

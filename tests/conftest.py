@@ -11,4 +11,5 @@ def _no_real_network_settings(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "WSJTX_FILE", tmp_path / "net-cfg" / "wsjtx.yaml")
     monkeypatch.setattr(config, "RIG_FILE", tmp_path / "net-cfg" / "radio.yaml")
     monkeypatch.setattr(config, "KEYER_FILE", tmp_path / "net-cfg" / "keyer.yaml")
+    monkeypatch.setattr(config, "N1MM_FILE", tmp_path / "net-cfg" / "n1mm.yaml")
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / "cfg")

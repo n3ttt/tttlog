@@ -493,6 +493,47 @@ class ClusterButtonsDialog(QDialog):
         return [{"label": get(r, 0) or get(r, 1)[:12], "command": get(r, 1)} for r in range(12)]
 
 
+class N1mmDialog(QDialog):
+    """Config ▸ Rotor & N1MM broadcasts: N1MM-compatible UDP for GH Everyware and friends."""
+
+    def __init__(self, cfg: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Rotor & N1MM broadcasts")
+        self._cfg = dict(cfg)
+        f = QFormLayout(self)
+        self.radio = QCheckBox("Send radio info (frequency, mode, operator) like N1MM")
+        self.radio.setChecked(bool(cfg.get("radio")))
+        self.radio_to = QLineEdit(str(cfg.get("radio_targets", "127.0.0.1:12060")))
+        self.rotor = QCheckBox("Send rotor commands like N1MM (Alt+J turn, Alt+L long path, Ctrl+Alt+J stop)")
+        self.rotor.setChecked(bool(cfg.get("rotor")))
+        self.rotor_to = QLineEdit(str(cfg.get("rotor_targets", "127.0.0.1:12040")))
+        self.rotor_name = QLineEdit(str(cfg.get("rotor_name", "")))
+        self.rotor_name.setPlaceholderText("blank: every rotor ticked in GH Everyware")
+        self.bidir = QCheckBox("Bidirectional antenna")
+        self.bidir.setChecked(bool(cfg.get("bidirectional")))
+        f.addRow(self.radio)
+        f.addRow("Send radio info to", self.radio_to)
+        f.addRow(self.rotor)
+        f.addRow("Send rotor commands to", self.rotor_to)
+        f.addRow("Rotor name", self.rotor_name)
+        f.addRow(self.bidir)
+        note = QLabel("Green Heron GH Everyware: in GH Everyware Client, Configuration ▸ Software Control ▸ "
+                      "N1MM Setup (radio port 12060, rotor port 12040), then Band ▸ Use band selection from "
+                      "N1MM, and tick the rotors to follow. GH Everyware on another computer: put its address "
+                      "here, e.g. shack-pc:12040. Several addresses: separate with spaces.\n"
+                      "Headings come from your grid square (Config ▸ Station profile), else your country.")
+        note.setWordWrap(True)
+        f.addRow(note)
+        f.addRow(_buttons(self))
+
+    def values(self) -> dict:
+        out = dict(self._cfg)
+        out.update(radio=self.radio.isChecked(), radio_targets=self.radio_to.text().strip() or "127.0.0.1:12060",
+                   rotor=self.rotor.isChecked(), rotor_targets=self.rotor_to.text().strip() or "127.0.0.1:12040",
+                   rotor_name=self.rotor_name.text().strip(), bidirectional=self.bidir.isChecked())
+        return out
+
+
 class ShortcutsDialog(QDialog):
     """Config ▸ Keyboard shortcuts: change the keys for a few actions."""
 

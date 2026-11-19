@@ -73,6 +73,7 @@ The same `build_app.py` builds a macOS version on a Mac.
 
 | **Ctrl+K** | Connect / disconnect the DX cluster |
 | **F11** / **Ctrl+Shift+S** | Spot the last QSO (call + frequency) to the cluster |
+| **Alt+J / Alt+L / Ctrl+Alt+J** | Turn the beam to the station (short / long path) / stop the rotor |
 | **Ctrl+G** | Go to the newest needed spot (mults first, then Qs); press again for the next one, and so on round. If you were running, your run frequency is remembered for Ctrl+B |
 | **Ctrl+Shift+N / M / A** | Spots filter: mults + Qs / mults only / everything |
 | **Ctrl+Shift+J** | Spotters: anywhere → my CQ zone → my continent |
@@ -237,6 +238,14 @@ Config ▸ Voice & CW keyer… sets it up. Nothing is ever transmitted until you
 **Cut numbers (CW):** by default the RST goes out as **5NN** instead of 599. In Config ▸ Voice & CW keyer pick None, 9 → N and 0 → T, 1 → A as well, or the full set (1 A, 2 U, 3 V, 5 E, 7 B, 8 D, 9 N, 0 T). Tick **Also in the exchange** to cut the zone or serial number too (zone 5 → E, serial 001 → TTA). The RST's first digit always stays a number, and callsigns are never cut. Only what's sent changes; the log keeps 599.
 
 PTT can also be RTS or DTR on a keying serial port, or none (VOX). CW can also be a keyed DTR/RTS line on any radio (a USB keying interface, for example). The CW speed is set in the dialog and with PgUp/PgDn.
+
+## Rotor (Green Heron and friends) and N1MM broadcasts
+
+tttlog sends the same UDP packets N1MM Logger+ does, so programs built for N1MM work with it. Turn it on in Config ▸ Rotor & N1MM broadcasts.
+
+- **Rotor:** **Alt+J** turns the beam to the station in the entry line (or your last QSO), **Alt+L** the long path, **Ctrl+Alt+J** stops. The Entry pane shows the heading and distance as you type a call (*Beam 333° (LP 153°) · 10,926 km*), from your grid square in the station profile, else your country's centre. The keys can be changed in Config ▸ Keyboard shortcuts.
+- **Radio info** (frequency, mode, operator, Run/S&P) every 10 seconds and on every change, for band decoders and band-following antenna switching.
+- **Green Heron GH Everyware:** in GH Everyware Client, Configuration ▸ Software Control ▸ N1MM Setup (radio port 12060, rotor port 12040), then Band ▸ Use band selection from N1MM, and tick the rotors that should follow. If GH Everyware runs on another computer, give its address in tttlog (e.g. `shack-pc:12040`).
 
 ## WSJT-X (FT8 / FT4)
 

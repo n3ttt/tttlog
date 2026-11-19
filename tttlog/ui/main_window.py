@@ -39,6 +39,8 @@ from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
 from .rate_pane import RatePane
 from .rig_control import RigControl
+from .broadcast import Broadcaster
+from ..core import geo
 from .keyer import Keyer
 from .wsjtx_listener import WsjtxListener
 
@@ -49,6 +51,9 @@ EDITABLE_SHORTCUTS = {
     "go_needed": ("Go to the newest needed spot (remembers your run frequency)", "Ctrl+G"),
     "swap_run": ("Back to the run frequency / back to the spot", "Ctrl+B"),
     "toggle_run": ("Toggle Run / S&P", "Ctrl+R"),
+    "rotor_turn": ("Turn the beam to the station (short path)", "Alt+J"),
+    "rotor_long": ("Turn the beam to the station (long path)", "Alt+L"),
+    "rotor_stop": ("Stop the rotor", "Ctrl+Alt+J"),
 }
 
 FIXTURE_CTY = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "cty_sample.dat"
@@ -95,6 +100,7 @@ class MainWindow(QMainWindow):
         self.colors = config.load_colors()
         self.net_cfg = config.load_network()
         self.wsjtx_cfg = config.load_wsjtx()
+        self.n1mm_cfg = config.load_n1mm()
         self.rig_cfg = config.load_rig()
         self.keyer_cfg = config.load_keyer()
         self.node_id = config.node_id()
@@ -158,6 +164,7 @@ class MainWindow(QMainWindow):
         if self.rig_cfg.get("enabled"):
             self.rig.start(self.rig_cfg)
         self.keyer.configure(self.keyer_cfg)
+        self.broadcast.configure(self.n1mm_cfg, self._radio_info)
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
@@ -186,7 +193,11 @@ class MainWindow(QMainWindow):
                                    "QPushButton:checked { background: #2da44e; color: white; }")
         self.run_btn.clicked.connect(lambda: (self.toggle_run(), self.call.setFocus()))
         top.addWidget(self.run_btn)
-        top.addWidget(self.radio_lbl); top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
+        top.addWidget(self.radio_lbl)
+        self.beam_lbl = QLabel()
+        self.beam_lbl.setToolTip("Beam heading to the station in the entry line (Alt+J turns the rotor)")
+        top.addWidget(self.beam_lbl)
+        top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
         top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
         v.addLayout(top)
@@ -355,6 +366,9 @@ class MainWindow(QMainWindow):
         self.rig.modeChanged.connect(self._on_rig_mode)
         self.rig.stateChanged.connect(self._on_rig_state)
 
+        # N1MM-compatible UDP: RadioInfo + rotor commands (GH Everyware and friends)
+        self.broadcast = Broadcaster(self)
+
         # Voice + CW keyer (transmits only when Config ▸ Voice & CW keyer allows it)
         self.keyer = Keyer(self.rig, self)
         self.keyer.stateChanged.connect(self._on_keyer_state)
@@ -390,6 +404,11 @@ class MainWindow(QMainWindow):
         op = mb.addMenu("&Operating")
         op.addAction(self._shortcut_action("toggle_run", "Toggle Run / S&&P", self.toggle_run))
         op.addAction(self._shortcut_action("swap_run", "Back to run frequency / back to the spot", self.swap_run))
+        rot = op.addMenu("Rotor")
+        rot.addAction(self._shortcut_action("rotor_turn", "Turn to the station (short path)", lambda: self.turn_rotor()))
+        rot.addAction(self._shortcut_action("rotor_long", "Turn to the station (long path)",
+                                            lambda: self.turn_rotor(long_path=True)))
+        rot.addAction(self._shortcut_action("rotor_stop", "Stop the rotor", self.stop_rotor))
         op.addAction(QAction("Set frequency…", self, shortcut="Ctrl+F", triggered=self.ask_freq))
         op.addAction(QAction("Operator on (OPON)…", self, shortcut="Ctrl+Shift+O",
                              triggered=lambda: self.opon()))
@@ -406,6 +425,7 @@ class MainWindow(QMainWindow):
         cfg.addAction(QAction("Radio…", self, triggered=self.edit_radio))
         cfg.addAction(QAction("Voice && CW keyer…", self, triggered=self.edit_keyer))
         cfg.addAction(QAction("Keyboard shortcuts…", self, triggered=self.edit_shortcuts))
+        cfg.addAction(QAction("Rotor && N1MM broadcasts…", self, triggered=self.edit_n1mm))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -538,6 +558,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_radio(self):
         self._sync_mode_box()
+        if hasattr(self, "broadcast"):
+            self.broadcast.send_radio()
         if hasattr(self, "run_btn"):
             self.run_btn.setChecked(self.run_mode)
             self.run_btn.setText("RUN" if self.run_mode else "S&&P")
@@ -627,6 +649,7 @@ class MainWindow(QMainWindow):
 
     def _live_check(self, call):
         self._update_partials(call)
+        self._show_beam(call)
         if not self.engine or len(call) < 3 or FREQ_RE.match(call):
             self.banner("")
             return
@@ -997,6 +1020,64 @@ class MainWindow(QMainWindow):
                                     f"{self._key('swap_run')} back to run" if n else
                                     f"Needed mults spotted show here · {self._key('go_needed')} go · "
                                     f"{self._key('swap_run')} back to run")
+
+    # ---------------------------------------------------------- beam heading / rotor
+    def _my_latlon(self) -> tuple[float, float] | None:
+        ll = geo.grid_to_latlon(self.station.grid)
+        if ll:
+            return ll
+        hit = self.cty.lookup(self.station.call) if self.station.call not in ("", "N0CALL") else None
+        return (hit[0].lat, hit[0].lon) if hit else None
+
+    def beam_to(self, call: str) -> tuple[float, float] | None:
+        """(short-path heading, km) to a call's country, or None."""
+        me = self._my_latlon()
+        hit = self.cty.lookup(call) if call and len(call) >= 2 else None
+        if not me or not hit:
+            return None
+        there = (hit[0].lat, hit[0].lon)
+        return geo.bearing(me, there), geo.distance_km(me, there)
+
+    def _show_beam(self, call: str):
+        b = self.beam_to(call) if call and not FREQ_RE.match(call) else None
+        if not b:
+            self.beam_lbl.setText("")
+            return
+        sp, km = b
+        self.beam_lbl.setText(f"Beam {sp:.0f}° (LP {geo.long_path(sp):.0f}°) · {km:,.0f} km")
+
+    def _rotor_call(self) -> str:
+        return self.call.text().strip().upper() or (self.qsos[-1].call if self.qsos else "")
+
+    def turn_rotor(self, long_path: bool = False):
+        call = self._rotor_call()
+        b = self.beam_to(call)
+        if not b:
+            self.banner("Type a call first (or set your grid in Config ▸ Station profile)", "#ffd166")
+            return
+        az = geo.long_path(b[0]) if long_path else b[0]
+        if not self.broadcast.turn(az, self.freq_khz):
+            self.banner("Rotor control is off: Config ▸ Rotor & N1MM broadcasts", "#ffd166")
+            return
+        self.banner(f"Turning the beam to {az:.0f}° ({'long' if long_path else 'short'} path to {call}) · "
+                    f"{self._key('rotor_stop')} stops")
+
+    def stop_rotor(self):
+        if self.broadcast.stop(self.freq_khz):
+            self.banner("Rotor stopped")
+
+    def _radio_info(self) -> dict:
+        return {"station": self.net_cfg.get("station_name", "") or self.station.call, "mycall": self.station.call,
+                "op": self.current_op, "khz": self.freq_khz, "mode": self.mode, "running": self.run_mode,
+                "transmitting": bool(getattr(self, "keyer", None) and self.keyer.keyed)}
+
+    def edit_n1mm(self):
+        from .dialogs import N1mmDialog
+        dlg = N1mmDialog(self.n1mm_cfg, self)
+        if dlg.exec():
+            self.n1mm_cfg = dlg.values()
+            config.save_n1mm(self.n1mm_cfg)
+            self.broadcast.configure(self.n1mm_cfg, self._radio_info)
 
     def swap_run(self):
         """Back to the run frequency (and Run); pressed again, back to the spot you left."""
