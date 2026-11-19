@@ -762,3 +762,51 @@ class KeyerDialog(QDialog):
                    cut=self.cut.currentData(), cut_exch=self.cut_exch.isChecked(),
                    ptt_lead_ms=self.lead.value(), ptt_tail_ms=self.tail.value())
         return out
+
+
+class CallbookDialog(QDialog):
+    """HamQTH login, for the other station's grid square (beam headings)."""
+
+    def __init__(self, cfg: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Callbook (HamQTH)")
+        f = QFormLayout(self)
+        info = QLabel("Looks up the other station's grid square on HamQTH.com, so the beam heading "
+                      "points at the station, not the middle of its country. Needs a free "
+                      "HamQTH account. Calls HamQTH doesn't know use the country's centre.")
+        info.setWordWrap(True)
+        f.addRow(info)
+        self.enabled = QCheckBox("Look up calls on HamQTH")
+        self.enabled.setChecked(bool(cfg.get("enabled")))
+        self.user = QLineEdit(cfg.get("user", ""))
+        self.user.setPlaceholderText("your HamQTH user name (usually your call)")
+        self.password = QLineEdit(cfg.get("password", ""))
+        self.password.setEchoMode(QLineEdit.Password)
+        self.test_btn = QPushButton("Test login")
+        self.test_lbl = QLabel()
+        self.test_lbl.setWordWrap(True)
+        self.test_btn.clicked.connect(self._test)
+        row = QHBoxLayout(); row.addWidget(self.test_btn); row.addWidget(self.test_lbl, 1)
+        f.addRow("", self.enabled)
+        f.addRow("User name", self.user)
+        f.addRow("Password", self.password)
+        f.addRow("", row)
+        note = QLabel("Sign up free at hamqth.com. The password is saved in ~/.tttlog/callbook.yaml, "
+                      "readable only by you.")
+        note.setWordWrap(True)
+        f.addRow(note)
+        f.addRow(_buttons(self))
+
+    def _test(self):
+        from ..core.callbook import CallbookError, HamQTH
+        self.test_lbl.setText("Checking…")
+        self.test_lbl.repaint()
+        try:
+            HamQTH(self.user.text(), self.password.text()).test_login()
+            self.test_lbl.setText("✓ Logged in")
+        except CallbookError as e:
+            self.test_lbl.setText(f"✗ {e}")
+
+    def values(self) -> dict:
+        return {"enabled": self.enabled.isChecked(), "user": self.user.text().strip(),
+                "password": self.password.text()}

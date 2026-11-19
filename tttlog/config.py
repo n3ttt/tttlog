@@ -344,3 +344,25 @@ def load_n1mm() -> dict:
 def save_n1mm(cfg: dict) -> None:
     N1MM_FILE.parent.mkdir(parents=True, exist_ok=True)
     N1MM_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+
+
+# HamQTH callbook (free account at hamqth.com): the other station's grid square,
+# for beam headings. Kept in its own file, readable only by you.
+CALLBOOK_FILE = CONFIG_DIR / "callbook.yaml"
+DEFAULT_CALLBOOK = {"enabled": False, "user": "", "password": ""}
+
+
+def load_callbook() -> dict:
+    cfg = dict(DEFAULT_CALLBOOK)
+    if CALLBOOK_FILE.exists():
+        cfg.update(yaml.safe_load(CALLBOOK_FILE.read_text()) or {})
+    return cfg
+
+
+def save_callbook(cfg: dict) -> None:
+    CALLBOOK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CALLBOOK_FILE.write_text(yaml.safe_dump(cfg, sort_keys=False))
+    try:
+        CALLBOOK_FILE.chmod(0o600)          # the password is in here
+    except OSError:
+        pass

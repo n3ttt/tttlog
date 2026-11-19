@@ -43,6 +43,7 @@ from .score_pane import ScorePane
 from .rig_control import RigControl
 from .broadcast import Broadcaster
 from ..core import geo
+from ..core.callbook import HamQTH, location as callbook_location, looks_like_call
 from .keyer import Keyer
 from .wsjtx_listener import WsjtxListener
 
@@ -106,6 +107,12 @@ class MainWindow(QMainWindow):
         self.net_cfg = config.load_network()
         self.wsjtx_cfg = config.load_wsjtx()
         self.n1mm_cfg = config.load_n1mm()
+        self.callbook_cfg = config.load_callbook()
+        self.callbook: HamQTH | None = None
+        self._make_callbook()
+        self._cb_pending: set[str] = set()
+        self._cb_error = ""                        # last HamQTH problem (shown once)
+        self._cb_timer = QTimer(self, singleShot=True, interval=500, timeout=self._lookup_call)
         self.rig_cfg = config.load_rig()
         self.keyer_cfg = config.load_keyer()
         self.node_id = config.node_id()
@@ -438,6 +445,7 @@ class MainWindow(QMainWindow):
         cfg.addAction(QAction("Voice && CW keyer…", self, triggered=self.edit_keyer))
         cfg.addAction(QAction("Keyboard shortcuts…", self, triggered=self.edit_shortcuts))
         cfg.addAction(QAction("Rotor && N1MM broadcasts…", self, triggered=self.edit_n1mm))
+        cfg.addAction(QAction("Callbook (HamQTH)…", self, triggered=self.edit_callbook))
         cl = mb.addMenu("C&luster")
         cl.addAction(QAction("Connect / disconnect", self, shortcut="Ctrl+K",
                              triggered=lambda: self.cluster_connect(not self.cluster._want)))
@@ -1063,22 +1071,66 @@ class MainWindow(QMainWindow):
         hit = self.cty.lookup(self.station.call) if self.station.call not in ("", "N0CALL") else None
         return (hit[0].lat, hit[0].lon) if hit else None
 
-    def beam_to(self, call: str) -> tuple[float, float] | None:
-        """(short-path heading, km) to a call's country, or None."""
+    def beam_to(self, call: str) -> tuple[float, float, str] | None:
+        """(short-path heading, km, aimed at) to a call, or None.
+        Aims at the station's grid square from HamQTH when it's known (looked up
+        in the background), otherwise at the centre of its country."""
         me = self._my_latlon()
         hit = self.cty.lookup(call) if call and len(call) >= 2 else None
         if not me or not hit:
             return None
-        there = (hit[0].lat, hit[0].lon)
-        return geo.bearing(me, there), geo.distance_km(me, there)
+        there, what = (hit[0].lat, hit[0].lon), f"{hit[0].name} centre"
+        if self.callbook:
+            loc = callbook_location(self.callbook.cached(call))
+            if loc:
+                there, what = loc[0], f"{loc[1]} (HamQTH)"
+        return geo.bearing(me, there), geo.distance_km(me, there), what
 
     def _show_beam(self, call: str):
         b = self.beam_to(call) if call and not FREQ_RE.match(call) else None
         if not b:
             self.beam_lbl.setText("")
             return
-        sp, km = b
-        self.beam_lbl.setText(f"Beam {sp:.0f}° (LP {geo.long_path(sp):.0f}°) · {km:,.0f} km")
+        sp, km, what = b
+        self.beam_lbl.setText(f"Beam {sp:.0f}° (LP {geo.long_path(sp):.0f}°) · {km:,.0f} km · {what}")
+        if self.callbook and looks_like_call(call) and self.callbook.cached(call) is None:
+            self._cb_timer.start()                 # look it up once typing pauses
+
+    # -- HamQTH callbook ------------------------------------------------------
+    def _make_callbook(self):
+        c = self.callbook_cfg
+        self.callbook = (HamQTH(c["user"], c["password"], USER_DATA_DIR / "hamqth_cache.json")
+                         if c.get("enabled") and c.get("user") and c.get("password") else None)
+
+    def _lookup_call(self):
+        call = self.call.text().strip().upper()
+        cb = self.callbook
+        if not cb or not looks_like_call(call) or cb.cached(call) is not None or call in self._cb_pending:
+            return
+        self._cb_pending.add(call)
+
+        def done(res):
+            self._cb_pending.discard(call)
+            if isinstance(res, Exception):
+                msg = str(res)
+                if msg != self._cb_error:          # say it once, not on every call
+                    self._cb_error = msg
+                    self.banner(f"HamQTH lookup: {msg} (Config ▸ Callbook). Using country centres.", "#ffd166")
+                return
+            self._cb_error = ""
+            if self.call.text().strip().upper() == call:
+                self._show_beam(call)
+        self._bg(lambda: cb.lookup(call), done)
+
+    def edit_callbook(self):
+        from .dialogs import CallbookDialog
+        dlg = CallbookDialog(self.callbook_cfg, self)
+        if dlg.exec():
+            self.callbook_cfg = dlg.values()
+            config.save_callbook(self.callbook_cfg)
+            self._make_callbook()
+            self._cb_error = ""
+            self._show_beam(self.call.text().strip().upper())
 
     def _rotor_call(self) -> str:
         return self.call.text().strip().upper() or (self.qsos[-1].call if self.qsos else "")
