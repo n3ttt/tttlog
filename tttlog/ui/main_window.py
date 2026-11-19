@@ -255,7 +255,9 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(8, 4, 8, 4)
         v.setSpacing(4)
         self.canvas = GridCanvas()
-        self.canvas.layoutChanged.connect(lambda: None)
+        # Autosave: every move, resize, roll-up, pop-out or close is saved a moment later
+        self._layout_save = QTimer(self, singleShot=True, interval=1500, timeout=self._autosave_layout)
+        self.canvas.layoutChanged.connect(self._layout_save.start)
         self.grid_scroll = QScrollArea()
         self.grid_scroll.setWidgetResizable(True)
         self.grid_scroll.setFrameShape(QFrame.NoFrame)
@@ -1951,6 +1953,22 @@ class MainWindow(QMainWindow):
         if not grid:
             return None
         return {"grid": grid, "geometry": self.settings.value(f"layouts/{op.upper()}/geometry")}
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if hasattr(self, "_layout_save") and self.isVisible():
+            self._layout_save.start()
+
+    def moveEvent(self, ev):
+        super().moveEvent(ev)
+        if hasattr(self, "_layout_save") and self.isVisible():
+            self._layout_save.start()
+
+    def _autosave_layout(self):
+        """The layout as it is now, for next time and for the operator at this station."""
+        self.settings.setValue("geometry", self.saveGeometry())
+        self._save_grid_setting("grid_layout")
+        self.save_op_layout(quiet=True)
 
     def save_op_layout(self, op: str | None = None, quiet: bool = False):
         """Remember the layout for an operator (View ▸ Save layout; also on OPON and on close)."""

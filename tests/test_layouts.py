@@ -247,3 +247,21 @@ def test_layout_survives_restart(app, win):
     w2.reset_layout(); _settle(app)                                  # View ▸ Reset to the default layout
     assert not w2.dock_telnet.minimized and w2.dock_score.shown
     w2.close()
+
+
+def test_layout_autosaves_without_closing(app, win):
+    """Moved, rolled up or closed: saved within a couple of seconds, so a crash or a
+    power cut doesn't lose it."""
+    import tttlog.ui.main_window as mw
+    c = _show(app, win)
+    win.opon("N3TTT")
+    c.place(win.dock_rate, QRect(10, 30, 6, 7))
+    win.dock_telnet.set_minimized(True)
+    win.dock_score.close()
+    before = _cells(win)
+    _settle(app, 1800)                                   # no close: the autosave has to do it
+    w2 = mw.MainWindow()
+    w2.show(); _settle(app, 300)
+    assert _cells(w2) == before
+    assert w2.dock_telnet.minimized and not w2.dock_score.shown
+    w2.close()

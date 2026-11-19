@@ -286,6 +286,7 @@ class Pane(QFrame):
             self.hide()
             if self.canvas is not None:
                 self.canvas.relayout()
+                self.canvas.layoutChanged.emit()
         self.visibilityChanged.emit(on)
 
     def close(self):
@@ -319,6 +320,7 @@ class Pane(QFrame):
         if self.canvas is not None:
             if on:
                 self.canvas.relayout()                  # rolls up; nothing else moves
+                self.canvas.layoutChanged.emit()
             else:
                 self.canvas.place(self, self.grid)      # unrolls, bumping anything now below
 
@@ -351,6 +353,7 @@ class Pane(QFrame):
                 self.canvas.place(self, self.grid)
         self.bar.sync()
         self.topLevelChanged.emit(on)
+        self.canvas.layoutChanged.emit()
 
     def _on_top_level(self, floating: bool):            # kept for the main window's startup code
         self.bar.sync()
