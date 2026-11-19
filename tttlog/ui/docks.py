@@ -409,6 +409,22 @@ class GridCanvas(QWidget):
             r.setHeight(1)
         return r
 
+    def find_free(self, w: int, h: int, prefer: QRect | None = None) -> QRect:
+        """A free spot w x h cells: `prefer` if it's free, else the first free one from
+        the top left, else below everything."""
+        taken = [self.occupied(p) for p in self.on_grid()]
+        free = lambda r: not any(overlaps(r, t) for t in taken)
+        if prefer is not None:
+            r = QRect(prefer.x(), prefer.y(), w, h)
+            if free(r):
+                return QRect(prefer.x(), prefer.y(), w, prefer.height())
+        bottom = max((t.y() + t.height() for t in taken), default=0)
+        for y in range(0, bottom + 1):
+            for x in range(0, COLS - w + 1):
+                if free(QRect(x, y, w, h)):
+                    return QRect(x, y, w, prefer.height() if prefer is not None else h)
+        return QRect(0, bottom, w, prefer.height() if prefer is not None else h)
+
     def rows(self) -> int:
         """How many grid rows fit in the visible window (panes stop at its bottom)."""
         vp = self.parentWidget()
@@ -629,5 +645,6 @@ class GridCanvas(QWidget):
                 p._float_geo = QRect(fx, fy, fw, fh)
                 p.setFloating(True)
         self.relayout()
-        for p in new:
+        for p in new:                                # into free space if there is any
+            p.grid = self.find_free(p.grid.width(), 1, prefer=p.grid)
             self.place(p, p.grid)

@@ -35,6 +35,7 @@ from .dialogs import (ClusterButtonsDialog, ClusterDialog, EditQsoDialog, FKeyDi
 from .docks import GridCanvas, Pane
 from .needed_pane import NeededPane
 from .needed_spots_pane import NeededSpotsPane
+from .bandmap_pane import BandmapPane
 from .network_pane import NetNode, NetworkPane
 from .band_pane import BandPane
 from .rate_pane import RatePane
@@ -52,6 +53,8 @@ EDITABLE_SHORTCUTS = {
     "go_needed": ("Go to the newest needed spot (remembers your run frequency)", "Ctrl+G"),
     "swap_run": ("Back to the run frequency / back to the spot", "Ctrl+B"),
     "toggle_run": ("Toggle Run / S&P", "Ctrl+R"),
+    "spot_higher": ("Next spot up the band (higher kHz)", "Ctrl+Down"),
+    "spot_lower": ("Next spot down the band (lower kHz)", "Ctrl+Up"),
     "rotor_turn": ("Turn the beam to the station (short path)", "Alt+J"),
     "rotor_long": ("Turn the beam to the station (long path)", "Alt+L"),
     "rotor_stop": ("Stop the rotor", "Ctrl+Alt+J"),
@@ -63,10 +66,11 @@ LAYOUT_VERSION = "grid2"  # bump when panes are added/renamed so old saved layou
 
 # Where each pane starts on the grid (48 columns wide; rows are 22 px): x, y, width, height
 DEFAULT_GRID = {
-    "Bands": (0, 0, 3, 28), "Entry": (3, 0, 29, 14), "Log": (3, 14, 12, 14),
-    "Spots": (15, 14, 17, 9), "Telnet": (15, 23, 17, 5), "Score": (32, 0, 16, 9),
+    "Bands": (0, 0, 3, 28), "Entry": (3, 0, 22, 14), "Log": (3, 14, 10, 14),
+    "Spots": (13, 14, 12, 9), "Telnet": (13, 23, 12, 5), "Bandmap": (25, 0, 7, 28),
+    "Score": (32, 0, 16, 9),
     "Check Partial": (32, 9, 16, 5), "Rate": (32, 14, 16, 8), "Needed": (32, 22, 16, 6),
-    "Network": (32, 28, 16, 6), "Needed Spots": (15, 28, 17, 8),
+    "Network": (32, 28, 16, 6), "Needed Spots": (13, 28, 12, 8),
 }
 DEFAULT_MINIMIZED = ("Network", "Needed Spots")
 FREQ_RE = re.compile(r"^\d{4,6}(\.\d)?$")
@@ -338,6 +342,12 @@ class MainWindow(QMainWindow):
         self.needed_spots_pane.spotActivated.connect(lambda s: (self.go_to_spot(s), self.call.setFocus()))
         self._dock("Needed Spots", self.needed_spots_pane)
 
+        # Bandmap: the band as a frequency scale with the spots on it
+        self.bandmap = BandmapPane(self.colors)
+        self.bandmap.privilege_check = self._spot_privilege
+        self.bandmap.spotActivated.connect(lambda s: (self.go_to_spot(s), self.call.setFocus()))
+        self._dock("Bandmap", self.bandmap)
+
         # Local network: share the log with other tttlog stations
         self.net = NetNode(self.node_id, self)
         self.network_pane = NetworkPane()
@@ -446,6 +456,10 @@ class MainWindow(QMainWindow):
                                       checked=bool(self.cluster_cfg.get("chase_band_only")),
                                       toggled=self.set_chase_band_only)
         cl.addAction(self.chase_band_act)
+        cl.addAction(self._shortcut_action("spot_higher", "Next spot up the band (higher kHz)",
+                                           lambda: self.next_spot(+1)))
+        cl.addAction(self._shortcut_action("spot_lower", "Next spot down the band (lower kHz)",
+                                           lambda: self.next_spot(-1)))
         cl.addAction(QAction("Search spots", self, shortcut="Ctrl+Shift+F",
                              triggered=self._focus_spot_search))
         cl.addSeparator()
@@ -556,6 +570,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_radio(self):
         self._sync_mode_box()
+        if hasattr(self, "bandmap"):
+            self.bandmap.set_radio(self.freq_khz, band_from_khz(self.freq_khz))
         if hasattr(self, "broadcast"):
             self.broadcast.send_radio()
         if hasattr(self, "run_btn"):
@@ -619,6 +635,7 @@ class MainWindow(QMainWindow):
         self.mode = rules["modes"][0]
         self._build_mode_menu(rules["modes"])
         self.band_pane.set_bands(list(rules["bands"]))
+        self.bandmap.set_bands(list(rules["bands"]))
         self.rst.setText(self.engine.default_rst(self.mode))
         self.exch.setPlaceholderText(" ".join(f.get("label", f["name"]).upper()
                                               for f in self.engine.rcvd_fields))
@@ -1586,6 +1603,23 @@ class MainWindow(QMainWindow):
             self.banner(f"{i + 1} of {len(spots)}: {s.call} {s.freq_khz:,.1f} · {self._key('go_needed')} next · "
                         f"{self._key('swap_run')} back to run")
 
+    def next_spot(self, direction: int):
+        """S&P down the band: go to the nearest needed spot above (+1) or below (-1) the
+        radio on this band. Dupes and spots outside your privileges are skipped."""
+        band = band_from_khz(self.freq_khz)
+        here = self.freq_khz
+        spots = sorted((s for s in self.spots_pane.filtered_spots()
+                        if s.band == band and s.status in ("MULT", "Q") and not self._spot_privilege(s)),
+                       key=lambda s: s.freq_khz)
+        if direction > 0:
+            pick = next((s for s in spots if s.freq_khz > here + 0.05), None)
+        else:
+            pick = next((s for s in reversed(spots) if s.freq_khz < here - 0.05), None)
+        if pick is None:
+            self.banner(f"No more needed spots {'above' if direction > 0 else 'below'} {here:,.1f} on {band}")
+            return
+        self.go_to_spot(pick)
+
     def set_chase_band_only(self, on: bool):
         self.cluster_cfg["chase_band_only"] = bool(on)
         config.save_cluster(self.cluster_cfg)
@@ -1616,6 +1650,8 @@ class MainWindow(QMainWindow):
         self.needed_pane.update_data(self.qsos, spots)
         if hasattr(self, "needed_spots_pane"):
             self.needed_spots_pane.update_spots(spots, band_from_khz(self.freq_khz))
+        if hasattr(self, "bandmap"):
+            self.bandmap.update_spots(spots)
 
     def _save_colors(self):
         config.save_colors(self.colors)

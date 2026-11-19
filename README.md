@@ -74,6 +74,7 @@ The same `build_app.py` builds a macOS version on a Mac.
 | **Ctrl+K** | Connect / disconnect the DX cluster |
 | **F11** / **Ctrl+Shift+S** | Spot the last QSO (call + frequency) to the cluster |
 | **Alt+J / Alt+L / Ctrl+Alt+J** | Turn the beam to the station (short / long path) / stop the rotor |
+| **Ctrl+Down / Ctrl+Up** | Next needed spot up / down the band (Bandmap) |
 | **Ctrl+G** | Go to the newest needed spot (mults first, then Qs); press again for the next one, and so on round. If you were running, your run frequency is remembered for Ctrl+B |
 | **Ctrl+Shift+N / M / A** | Spots filter: mults + Qs / mults only / everything |
 | **Ctrl+Shift+J** | Spotters: anywhere → my CQ zone → my continent |
@@ -103,6 +104,10 @@ Every part of the window (Bands, Entry, Log, Spots, Telnet, Score, Check Partial
 Panes stop at the edges of the window: you can't drag or resize one past them. If a pane you move would push another off the bottom, that one gets shorter to fit instead; if there's no room even then, the move stops where it last fitted. (If you make the whole window smaller than your layout, it scrolls.) View ▸ Minimize all panes, Restore all panes, and Dock all pop-out windows act on every pane at once.
 
 **Layouts are kept, per operator.** Where every pane is (in grid cells), which are rolled up, closed, or popped out is saved automatically a moment after every change (so a crash or power cut doesn't lose it) and comes back next time, the same on Mac, Windows and Linux. Each operator has their own: **OPON** saves the outgoing operator's layout and switches to the incoming operator's (the first time someone logs on, they start from the current layout). View ▸ **Save layout for <op>** saves it right away; View ▸ **Reset to the default layout** goes back to tttlog's arrangement. With Local network on, each operator's layout and US license class also follow them to the other stations: when it's saved at one station (OPON away, closing tttlog, Save layout, or setting their class), it's sent to every linked station, and **OPON** there brings it up. A station that links later is caught up. Only the pane arrangement travels, not the window's size or position, since every computer's screen is different; the newest saved copy wins.
+
+## Bandmap
+
+The **Bandmap** pane draws the band you're on as a frequency scale, with each spot at its frequency, coloured like the Spots pane (mult, Q; tick **Dupes** to see worked ones too), and a red marker where the radio is; it follows the radio. Click a spot to go there. For S&P, **Ctrl+Down** goes to the next needed spot up the band (higher kHz) and **Ctrl+Up** the next one down, skipping dupes and spots outside your privileges (keys changeable in Config ▸ Keyboard shortcuts). Pick another band from its list to look at that band instead; zoom with + / − or Ctrl + mouse wheel.
 
 ## Score pane
 
