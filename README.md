@@ -215,6 +215,9 @@ Config ▸ Radio… connects to the radio:
 - **FlexRadio** through SmartSDR: on a Mac, SmartSDR for Mac's CAT port (Network, 127.0.0.1, port 5002); on Windows, a TCP port from SmartSDR CAT.
 - **Kenwood / Elecraft** (Kenwood command set), over the network or a serial/USB port.
 - **Yaesu** FTDX10 / FTDX101 / FT-710 / FT-991A over the radio's USB (Enhanced COM) port at its CAT RATE.
+- **Icom** (CI-V) over the radio's USB port or a CI-V interface: IC-7300, IC-7300MK2, IC-7610, IC-7760, IC-7851, IC-9700, IC-705, IC-905, IC-7100, IC-7600, IC-7700, IC-7410, IC-7200, IC-756PROII/III, IC-7000, IC-746PRO, IC-718, or *Other Icom* with its address. Pick the model; the CI-V address fills in with the model's default (IC-7300 94h, IC-7610 98h, IC-9700 A2h, IC-705 A4h...), or type the address set on the radio. Network: a raw CI-V TCP bridge (wfview's or ser2net's), not Icom's own LAN/RS-BA1 protocol.
+
+**Icom setup on the radio** (IC-7300: Menu ▸ Set ▸ Connectors ▸ CI-V): **CI-V Baud Rate** the same as tttlog's (19200 is safe; *Auto* follows tttlog), **CI-V Address** = what tttlog shows, **CI-V Transceive ON** (the radio then reports dial turns at once), **CI-V USB Echo Back OFF** (on is OK too: tttlog ignores its own echoed commands). Several radios can share one CI-V bus: tttlog only listens to the address you set. Older radios that don't know the data-mode command (DATA on/off) are detected and asked only for frequency and mode.
 
 tttlog follows the radio: the frequency, band button and mode track the dial, and every QSO is logged on the radio's real frequency. The top bar shows **● Radio** (green when the radio answers).
 
@@ -238,11 +241,11 @@ Config ▸ Voice & CW keyer… sets it up. Nothing is ever transmitted until you
 
 **Sending:** in SSB (and AM/FM), F-keys key the radio (PTT), play the recording to the radio's audio input, and unkey. In CW they send the macro text. **Esc** stops at once. A hard time limit (90 s, or the message length plus a few seconds) unkeys the radio if anything ever sticks, and closing tttlog releases PTT.
 
-| Setting | FlexRadio (SmartSDR) | Yaesu FTDX10 | Kenwood / Elecraft |
-|---|---|---|---|
-| Audio to the radio | the DAX TX device; turn on DAX for the transmit slice | USB Audio CODEC; radio menu SSB MOD SOURCE = REAR | the radio's USB audio |
-| PTT | Radio CAT command (`ZZTX1;`) | Radio CAT command (`TX1;`) | Radio CAT command (`TX1;`) |
-| CW | Radio sends the text (`KY`) | DTR on the Standard COM port (radio menu PC KEYING = DTR); CAT can't send text | Radio sends the text (`KY`) |
+| Setting | FlexRadio (SmartSDR) | Yaesu FTDX10 | Kenwood / Elecraft | Icom (IC-7300, 7610, 9700, 705...) |
+|---|---|---|---|---|
+| Audio to the radio | the DAX TX device; turn on DAX for the transmit slice | USB Audio CODEC; radio menu SSB MOD SOURCE = REAR | the radio's USB audio | USB Audio CODEC; radio menu DATA MOD = USB (and MOD input for SSB = USB) |
+| PTT | Radio CAT command (`ZZTX1;`) | Radio CAT command (`TX1;`) | Radio CAT command (`TX1;`) | CI-V `1C 00 01` |
+| CW | Radio sends the text (`KY`) | DTR on the Standard COM port (radio menu PC KEYING = DTR); CAT can't send text | Radio sends the text (`KY`) | Radio sends the text (CI-V `17`, speed `14 0C`). IC-7200, IC-7000, IC-756 and IC-746PRO can't: use DTR/RTS keying |
 
 **Cut numbers (CW):** by default the RST goes out as **5NN** instead of 599. In Config ▸ Voice & CW keyer pick None, 9 → N and 0 → T, 1 → A as well, or the full set (1 A, 2 U, 3 V, 5 E, 7 B, 8 D, 9 N, 0 T). Tick **Also in the exchange** to cut the zone or serial number too (zone 5 → E, serial 001 → TTA). The RST's first digit always stays a number, and callsigns are never cut. Only what's sent changes; the log keeps 599.
 

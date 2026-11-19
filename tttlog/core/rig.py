@@ -10,6 +10,9 @@ Three dialects of the same ";"-terminated ASCII command set:
 * yaesu   Yaesu FTDX10 / FTDX101 / FT-710 / FT-991A. FA = 9-digit Hz,
           MD0 = mode character.
 
+Icom radios speak CI-V instead (binary frames): see civ.py, picked with
+make_dialect(cfg) when cfg["dialect"] == "icom".
+
 Reads: frequency and mode (polled). Writes (only when tttlog is allowed to
 control the radio): frequency and mode.
 """
@@ -21,6 +24,7 @@ DIALECTS = {
     "flex": "FlexRadio (SmartSDR CAT)",
     "kenwood": "Kenwood / Elecraft",
     "yaesu": "Yaesu (FTDX10, FTDX101, FT-710, FT-991A)",
+    "icom": "Icom (CI-V: IC-7300, IC-7610, IC-9700, IC-705, ...)",
 }
 
 # radio mode code -> radio mode name
@@ -119,3 +123,16 @@ def split_replies(buf: bytes) -> tuple[list[str], bytes]:
     """Complete ';'-terminated replies, and what's left over."""
     *done, rest = buf.split(b";")
     return [d.decode("ascii", "replace").strip() for d in done if d.strip()], rest
+
+
+def make_dialect(cfg: dict):
+    """The protocol object for the configured radio."""
+    name = cfg.get("dialect", "flex")
+    if name == "icom":
+        from .civ import MODELS, IcomDialect
+        model = cfg.get("civ_model", "ic7300")
+        addr = cfg.get("civ_addr")
+        if not isinstance(addr, int) or not 0 < addr < 0xE0:
+            addr = MODELS.get(model, MODELS["other"])[1]
+        return IcomDialect(addr=addr, model=model)
+    return Dialect(name)

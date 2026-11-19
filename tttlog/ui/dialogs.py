@@ -366,7 +366,7 @@ class WsjtxDialog(QDialog):
 
 
 class RadioDialog(QDialog):
-    """Config ▸ Radio: CAT connection (Flex via SmartSDR, Kenwood/Elecraft, Yaesu)."""
+    """Config ▸ Radio: CAT connection (Flex via SmartSDR, Kenwood/Elecraft, Yaesu, Icom CI-V)."""
 
     def __init__(self, cfg: dict, state: str = "", parent=None):
         from ..core.rig import DIALECTS
@@ -403,6 +403,20 @@ class RadioDialog(QDialog):
         for b in ("4800", "9600", "19200", "38400", "57600", "115200"):
             self.baud.addItem(b)
         self.baud.setCurrentText(str(cfg.get("baud", 38400)))
+        from ..core.civ import MODELS
+        self.civ_model = QComboBox()
+        for key, (name, addr, _d, _cw) in MODELS.items():
+            self.civ_model.addItem(f"{name}  ({addr:02X}h)" if key != "other" else name, key)
+        self.civ_model.setCurrentIndex(max(0, self.civ_model.findData(cfg.get("civ_model", "ic7300"))))
+        self.civ_addr = QLineEdit()
+        self.civ_addr.setMaxLength(2)
+        self.civ_addr.setFixedWidth(50)
+        self.civ_addr.setPlaceholderText("94")
+        addr = cfg.get("civ_addr")
+        if isinstance(addr, int):
+            self.civ_addr.setText(f"{addr:02X}")
+        self.civ_addr.setToolTip("CI-V address in hex, as set on the radio. Blank = the model's default")
+        self.civ_model.currentIndexChanged.connect(self._model_changed)
         self.control = QCheckBox("Let tttlog tune the radio (band buttons, typed kHz, spots, mode)")
         self.control.setChecked(bool(cfg.get("control")))
         note = QLabel(
@@ -410,11 +424,21 @@ class RadioDialog(QDialog):
             "frequency and mode, and never changes anything on the radio.\n"
             "FlexRadio on a Mac: SmartSDR for Mac's CAT port (default 127.0.0.1, port 5002). "
             "On Windows: a TCP port from SmartSDR CAT.\n"
-            "Yaesu FTDX10: Serial / USB, the radio's Enhanced COM port, at the radio's CAT RATE."
+            "Yaesu FTDX10: Serial / USB, the radio's Enhanced COM port, at the radio's CAT RATE.\n"
+            "Icom: Serial / USB at the radio's CI-V baud rate (e.g. 19200; the IC-7300's 'Auto' follows tttlog). "
+            "On the radio set CI-V Transceive ON, CI-V USB Echo Back OFF, and the CI-V address shown "
+            "here (or type the radio's address). Network: a raw CI-V TCP bridge (wfview, ser2net)."
             + (f"\nNow: {state}" if state else ""))
         note.setWordWrap(True)
         f.addRow(self.enabled)
         f.addRow("Radio", self.dialect)
+        civ_row = QHBoxLayout()
+        civ_row.addWidget(self.civ_model, 1)
+        civ_row.addWidget(QLabel("CI-V address"))
+        civ_row.addWidget(self.civ_addr)
+        civ_row.addWidget(QLabel("h"))
+        self._civ_label = QLabel("Icom model")
+        f.addRow(self._civ_label, civ_row)
         f.addRow("Connection", self.conn)
         f.addRow("Host", self.host)
         f.addRow("TCP port", self.port)
@@ -424,9 +448,18 @@ class RadioDialog(QDialog):
         f.addRow(note)
         f.addRow(_buttons(self))
         self.conn.currentIndexChanged.connect(self._sync)
+        self.dialect.currentIndexChanged.connect(self._sync)
         self._sync()
 
+    def _model_changed(self):
+        from ..core.civ import MODELS
+        self.civ_addr.setPlaceholderText(f"{MODELS[self.civ_model.currentData()][1]:02X}")
+
     def _sync(self):
+        icom = self.dialect.currentData() == "icom"
+        for w in (self.civ_model, self.civ_addr, self._civ_label):
+            w.setEnabled(icom)
+        self._model_changed()
         tcp = self.conn.currentData() == "tcp"
         for w in (self.host, self.port):
             w.setEnabled(tcp)
@@ -448,8 +481,17 @@ class RadioDialog(QDialog):
         out.update(enabled=self.enabled.isChecked(), dialect=self.dialect.currentData(),
                    connection=self.conn.currentData(), host=self.host.text().strip() or "127.0.0.1",
                    port=self.port.value(), serial_port=port, baud=baud,
-                   control=self.control.isChecked())
+                   control=self.control.isChecked(), civ_model=self.civ_model.currentData(),
+                   civ_addr=self._civ_addr_value())
         return out
+
+    def _civ_addr_value(self):
+        t = self.civ_addr.text().strip().upper().removesuffix("H")
+        try:
+            v = int(t, 16)
+        except ValueError:
+            return None
+        return v if 0 < v < 0xE0 else None
 
 
 def _serial_combo(current: str) -> QComboBox:

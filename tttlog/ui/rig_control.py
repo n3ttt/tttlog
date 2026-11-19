@@ -11,7 +11,8 @@ import time
 from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QAbstractSocket, QTcpSocket
 
-from ..core.rig import Dialect, split_replies
+from ..core import keyer as K
+from ..core.rig import Dialect, make_dialect, split_replies
 
 RETRY_MS = 3000
 SILENT_SECS = 3.0          # no answer this long -> say so
@@ -43,7 +44,7 @@ class RigControl(QObject):
         self.cfg = dict(cfg)
         if not cfg.get("enabled"):
             return
-        self.dialect = Dialect(cfg.get("dialect", "flex"))
+        self.dialect = make_dialect(cfg)
         self._poll.setInterval(max(150, int(cfg.get("poll_ms", 400))))
         self._open()
 
@@ -146,20 +147,27 @@ class RigControl(QObject):
     def _read(self) -> None:
         if self.dev is None:
             return
-        replies, self._buf = split_replies(self._buf + bytes(self.dev.readAll()))
+        split = getattr(self.dialect, "split", split_replies)    # CI-V frames or ";" replies
+        replies, self._buf = split(self._buf + bytes(self.dev.readAll()))
         self._buf = self._buf[-256:]
         for r in replies:
             self.feed(r)
 
-    def feed(self, reply: str) -> None:
+    def feed(self, reply) -> None:
         got = self.dialect.parse(reply)
-        if got is None:
+        for item in (got if isinstance(got, list) else [got] if got else []):
+            self._take(*item)
+
+    def _take(self, kind: str, val) -> None:
+        if val is None:
             return
         self._last_heard = time.monotonic()
         name = self.cfg.get("dialect", "flex")
+        if name == "icom":
+            from ..core.civ import MODELS
+            name = f"{MODELS.get(self.dialect.model, MODELS['other'])[0]}, CI-V {self.dialect.addr:02X}h"
         if not self.state.startswith("connected to"):
             self._set_state(f"connected to the radio ({name})")
-        kind, val = got
         now = time.monotonic()
         if kind == "freq" and now >= self._hold_freq:
             if self.freq_khz is None or abs(val - self.freq_khz) >= 0.001:
@@ -174,6 +182,30 @@ class RigControl(QObject):
     @property
     def dialect_name(self) -> str:
         return self.cfg.get("dialect", "flex")
+
+    # The radio's own commands for PTT and CW (ASCII CAT radios or Icom CI-V).
+    @property
+    def can_send_cw(self) -> bool:
+        d = self.dialect
+        return d.can_cw if hasattr(d, "can_cw") else self.dialect_name in K.CAT_CW
+
+    def ptt_command(self, on: bool) -> bytes:
+        d = self.dialect
+        if hasattr(d, "ptt"):
+            return d.ptt(on)
+        return (K.PTT_ON if on else K.PTT_OFF)[self.dialect_name]
+
+    def cw_speed_command(self, wpm: int) -> bytes:
+        d = self.dialect
+        return d.cw_speed(wpm) if hasattr(d, "cw_speed") else K.cw_set_speed(wpm)
+
+    def cw_commands(self, text: str) -> list[bytes]:
+        d = self.dialect
+        return d.cw(K.cw_text(text)) if hasattr(d, "cw") else K.cw_commands(self.dialect_name, text)
+
+    def cw_abort_commands(self) -> list[bytes]:
+        d = self.dialect
+        return d.cw_abort() if hasattr(d, "cw_abort") else K.cw_abort(self.dialect_name)
 
     def send_raw(self, cmd: bytes) -> bool:
         """Send a command (PTT, CW text) to a connected radio."""
@@ -199,7 +231,8 @@ class RigControl(QObject):
         cmd = self.dialect.set_mode(radio_mode)
         if cmd is None:
             return False
-        self.dev.write(cmd)
+        for c in (cmd if isinstance(cmd, list) else [cmd]):
+            self.dev.write(c)
         self.radio_mode = radio_mode
         self._hold_mode = time.monotonic() + HOLD_SECS
         return True

@@ -327,7 +327,7 @@ class Keyer(QObject):
         wpm = max(10, min(60, int(wpm)))
         self.cfg["wpm"] = wpm
         if self.cfg.get("cw", "cat") == "cat" and self.cfg.get("allow_tx"):
-            self.rig.send_raw(K.cw_set_speed(wpm))
+            self.rig.send_raw(self.rig.cw_speed_command(wpm))
         return wpm
 
     @property
@@ -346,7 +346,7 @@ class Keyer(QObject):
         uses_cat = (self.cfg.get("cw", "cat") == "cat") if cw else (self.cfg.get("ptt", "cat") == "cat")
         if uses_cat and not self.rig.is_connected():
             return "The radio isn't connected (Config ▸ Radio)"
-        if cw and self.cfg.get("cw", "cat") == "cat" and self.rig.dialect_name not in K.CAT_CW:
+        if cw and self.cfg.get("cw", "cat") == "cat" and not self.rig.can_send_cw:
             return ("This radio can't send CW text over CAT: in Config ▸ Voice & CW keyer pick DTR or RTS "
                     "keying on its second serial port")
         if not uses_cat and ((cw and self.cfg.get("cw") in ("dtr", "rts")) or
@@ -358,8 +358,7 @@ class Keyer(QObject):
     def _ptt(self, on: bool) -> None:
         how = self.cfg.get("ptt", "cat")
         if how == "cat":
-            d = self.rig.dialect_name
-            self.rig.send_raw((K.PTT_ON if on else K.PTT_OFF)[d])
+            self.rig.send_raw(self.rig.ptt_command(on))
         elif how in ("dtr", "rts") and self.line is not None:
             self.line.ptt(on)
 
@@ -425,8 +424,8 @@ class Keyer(QObject):
         self._set_state(f"TX CW {self.wpm} wpm: {txt}")
         self._limit.start(int(min(float(self.cfg.get("max_tx_secs", 90)), secs + 5) * 1000))
         if self.cfg.get("cw", "cat") == "cat":
-            self.rig.send_raw(K.cw_set_speed(self.wpm))
-            for cmd in K.cw_commands(self.rig.dialect_name, txt):
+            self.rig.send_raw(self.rig.cw_speed_command(self.wpm))
+            for cmd in self.rig.cw_commands(txt):
                 self.rig.send_raw(cmd)
             self._cw_done.start(int(secs * 1000) + 300)     # the radio doesn't say when it's done
         else:
@@ -463,7 +462,7 @@ class Keyer(QObject):
         self._previewing = False
         if self.keyed:
             if self.cfg.get("cw", "cat") == "cat" and self.state.startswith("TX CW"):
-                for cmd in K.cw_abort(self.rig.dialect_name):
+                for cmd in self.rig.cw_abort_commands():
                     self.rig.send_raw(cmd)
             if self.line is not None:
                 self.line.abort()

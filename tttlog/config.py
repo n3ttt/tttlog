@@ -48,6 +48,8 @@ DEFAULT_RIG = {
     "baud": 38400,
     "poll_ms": 400,
     "control": False,
+    "civ_model": "ic7300",      # Icom only: model (default CI-V address, data mode, CW)
+    "civ_addr": None,           # Icom only: CI-V address; None = the model's default
 }
 
 # WSJT-X (and JTDX / MSHV, which speak the same protocol): tttlog listens for
