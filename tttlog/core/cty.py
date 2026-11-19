@@ -33,6 +33,36 @@ def download_cty(timeout: float = 30) -> Path:
     tmp.replace(dest)
     return dest
 
+SCP_URL = "https://www.supercheckpartial.com/MASTER.SCP"
+
+
+def check_scp(data: bytes) -> int:
+    """Raises ValueError unless `data` looks like a MASTER.SCP (not a web page); returns
+    the number of calls in it."""
+    head = data[:2000].lower()
+    if b"<html" in head or b"<!doctype" in head:
+        raise ValueError("got a web page, not MASTER.SCP")
+    calls = [l for l in data.decode("latin-1", "replace").splitlines() if l.strip() and not l.startswith("#")]
+    if len(calls) < 1000:
+        raise ValueError(f"only {len(calls)} calls: not a Super Check Partial file")
+    return len(calls)
+
+
+def download_scp(timeout: float = 60) -> Path:
+    """Fetch the latest Super Check Partial file into the user data folder."""
+    import urllib.request
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    req = urllib.request.Request(SCP_URL, headers={"User-Agent": "tttlog"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        data = r.read()
+    check_scp(data)                          # don't replace a good file with an error page
+    dest = USER_DATA_DIR / "MASTER.SCP"
+    tmp = dest.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    tmp.replace(dest)
+    return dest
+
+
 # Suffixes after a slash that do NOT change the entity
 _IGNORE_SUFFIXES = {"P", "M", "MM", "AM", "QRP", "A", "B", "LH", "R"}
 

@@ -41,6 +41,9 @@ def universe(engine, mdef: dict, qsos: list[QSO]) -> list[tuple[object, str]]:
                 for e in engine.cty.entities() if e.name not in excl]
     if kind == "cq_zone":
         return [(z, f"Zone {z}") for z in range(1, 41)]
+    if mdef.get("in"):                                   # sections, states, provinces...
+        from .locations import values
+        return [(v, v) for v in values(mdef["in"])]
     # exchange-field mults (states, sections...) have no fixed list: show what's been worked
     vals = sorted({v for lbl, key in _keys(engine, qsos) if lbl == mdef.get("label", kind)
                    for v in key[-1:]}, key=str)
@@ -56,12 +59,18 @@ def _keys(engine, qsos):
 
 
 def columns(engine, mdef: dict) -> list[str]:
-    return list(engine.rules["bands"]) if mdef.get("scope", "per_band") == "per_band" else [ALL]
+    scope = mdef.get("scope", "per_band")
+    if scope == "per_band":
+        return list(engine.rules["bands"])
+    if scope == "per_mode":                             # e.g. ARRL 10 m: CW and phone count apart
+        from .models import mode_group
+        return list(dict.fromkeys(mode_group(m) for m in engine.rules.get("modes", [])))
+    return [ALL]
 
 
 def need_grid(engine, mdef: dict, qsos: list[QSO], spots: list[Spot]) -> tuple[list[str], list[NeedRow]]:
     label = mdef.get("label", mdef["type"])
-    per_band = mdef.get("scope", "per_band") == "per_band"
+    per_band = mdef.get("scope", "per_band") in ("per_band", "per_mode")    # keyed (column, value)
     cols = columns(engine, mdef)
     worked = {key for lbl, key in _keys(engine, qsos) if lbl == label}
 

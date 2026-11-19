@@ -1,0 +1,25 @@
+# North American QSO Party - SSB (check the current NCJ rules before the contest)
+# January and August. Exchange: first name + state / province / DX prefix.
+id: NAQP-SSB
+name: North American QSO Party - SSB
+cabrillo_contest: NAQP-SSB
+modes: [SSB]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 12
+location: state
+
+dupe: per_band
+
+exchange:
+  sent:
+    - {name: name, label: "NAME", from_station: name, first_word: true}
+    - {name: loc, label: "ST/PROV", from_station: state}
+  rcvd:
+    - {name: name, label: "NAME", pattern: '^[A-Z][A-Z0-9]*$'}
+    - {name: loc, label: "ST/PROV/DX", pattern: '^[A-Z0-9]{1,5}$', optional: true}   # DX outside NA: name only
+
+points: {type: fixed, value: 1}
+
+mults:
+  - {type: loc, in: states_provinces, scope: per_band, label: "States/Prov"}
+  - {type: dxcc, continent: NA, exclude_entities: ["United States", "Canada", "Alaska", "Hawaii"], scope: per_band, label: "NA DXCC"}

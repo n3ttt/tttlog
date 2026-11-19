@@ -9,7 +9,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 SHORT = {"zones": "ZN", "cq zones": "ZN", "itu zones": "ITU", "countries": "Cty", "dxcc": "Cty",
-         "states": "St", "sections": "Sec", "prefixes": "WPX", "provinces": "Prv", "counties": "Cty"}
+         "states": "St", "sections": "Sec", "prefixes": "WPX", "provinces": "Prv", "counties": "Cnty",
+         "states/prov": "S/P", "st/prov": "S/P", "na dxcc": "NA", "calls": "Calls"}
 MONO = "'Menlo', 'Consolas', 'DejaVu Sans Mono', monospace"
 
 

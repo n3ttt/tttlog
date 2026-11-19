@@ -1,0 +1,24 @@
+# CWops Mini-CWT (weekly, one hour; check cwops.org for the current rules)
+# Exchange: first name + CWops member number (non-members: state / province / DX prefix).
+id: CWOPS-CWT
+name: CWops Mini-CWT
+cabrillo_contest: CWOPS
+modes: [CW]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 1
+location: state
+
+dupe: per_band
+
+exchange:
+  sent:
+    - {name: name, label: "NAME", from_station: name, first_word: true}
+    - {name: nr, label: "NR", from_station: cwops, or_station: state}
+  rcvd:
+    - {name: name, label: "NAME", pattern: '^[A-Z][A-Z0-9]*$'}
+    - {name: nr, label: "NR/ST", pattern: '^(\d{1,6}|[A-Z0-9]{1,5})$'}
+
+points: {type: fixed, value: 1}
+
+mults:
+  - {type: call, scope: overall, label: "Calls"}      # each call once

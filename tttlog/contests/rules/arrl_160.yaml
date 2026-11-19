@@ -1,0 +1,25 @@
+# ARRL 160-Meter Contest (CW, first full weekend of December; check the current rules)
+# W/VE send RST + ARRL/RAC section, DX send RST only. W/VE 2 points, DX 5.
+id: ARRL-160
+name: ARRL 160-Meter Contest
+cabrillo_contest: ARRL-160
+modes: [CW]
+bands: [160m]
+duration_hours: 42
+location: section
+
+dupe: once
+
+exchange:
+  sent:
+    - {name: rst, default: "599"}
+    - {name: sec, label: "SEC", from_station: section}
+  rcvd:
+    - {name: rst, default: "599"}
+    - {name: sec, label: "SEC", in: sections, required_if_entities: ["United States", "Canada", "Alaska", "Hawaii"]}
+
+points: {type: by_location, home: 2, other: 5}
+
+mults:
+  - {type: sec, in: sections, scope: overall, label: "Sections"}
+  - {type: dxcc, exclude_entities: ["United States", "Canada", "Alaska", "Hawaii"], scope: overall, label: "DXCC"}

@@ -1,0 +1,29 @@
+# ARRL November Sweepstakes - Phone (check the current ARRL rules before the contest)
+# Exchange: serial, precedence, call, check, section. Each station once (any band).
+id: ARRL-SS-SSB
+name: ARRL Sweepstakes - Phone
+cabrillo_contest: ARRL-SS-SSB
+modes: [SSB]
+bands: [160m, 80m, 40m, 20m, 15m, 10m]
+duration_hours: 30
+location: section
+
+dupe: once
+
+exchange:
+  sent:
+    - {name: nr, serial: true}
+    - {name: prec, label: "PREC", from_station: ss_precedence}
+    - {name: mycall, from_station: call, air_only: true}      # sent, not logged
+    - {name: ck, label: "CK", from_station: ss_check}
+    - {name: sec, label: "SEC", from_station: section}
+  rcvd:
+    - {name: nr, label: "NR", pattern: '^\d{1,4}$'}
+    - {name: prec, label: "PREC", pattern: '^[QABUMS]$'}
+    - {name: ck, label: "CK", pattern: '^\d{2}$'}
+    - {name: sec, label: "SEC", in: sections}
+
+points: {type: fixed, value: 2}
+
+mults:
+  - {type: sec, in: sections, scope: overall, label: "Sections"}

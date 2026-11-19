@@ -90,10 +90,25 @@ class StationDialog(QDialog):
         self.lic.setCurrentIndex(max(0, self.lic.findData(normalize(st.license_class))))
         self.lic.setToolTip("US license class: tttlog warns when you're outside its privileges, keeps "
                             "band buttons inside them, and won't key the radio outside them")
+        self.section = QLineEdit(st.section); self.section.setPlaceholderText("e.g. DE, EPA, WCF")
+        self.section.setToolTip("ARRL/RAC section: Sweepstakes, Field Day, ARRL 160")
+        self.ss_check = QLineEdit(st.ss_check); self.ss_check.setPlaceholderText("2 digits")
+        self.ss_check.setToolTip("Sweepstakes check: last two digits of the year you were first licensed")
+        self.ss_prec = QComboBox()
+        for code, text in (("Q", "Q  single op QRP"), ("A", "A  single op low power"), ("B", "B  single op high power"),
+                           ("U", "U  unlimited"), ("M", "M  multi-op"), ("S", "S  school club")):
+            self.ss_prec.addItem(text, code)
+        self.ss_prec.setCurrentIndex(max(0, self.ss_prec.findData(st.ss_precedence or "A")))
+        self.cwops = QLineEdit(st.cwops); self.cwops.setPlaceholderText("blank: send your state")
+        self.cwops.setToolTip("CWops member number, sent in the CWT")
+        self.fd_class = QLineEdit(st.fd_class); self.fd_class.setPlaceholderText("e.g. 1D, 2A")
         for lbl, w in [("Call", self.call), ("Operator", self.op), ("State/Prov", self.state),
                        ("CQ zone", self.zone), ("ITU zone", self.itu), ("Grid", self.grid),
                        ("Name", self.name), ("Address (use | between lines)", self.addr),
-                       ("Club", self.club), ("Email", self.email), ("US license class", self.lic)]:
+                       ("Club", self.club), ("Email", self.email), ("US license class", self.lic),
+                       ("ARRL section", self.section), ("Sweepstakes check", self.ss_check),
+                       ("Sweepstakes precedence", self.ss_prec), ("CWops member #", self.cwops),
+                       ("Field Day class", self.fd_class)]:
             f.addRow(lbl, w)
         f.addRow(_buttons(self))
 
@@ -104,7 +119,10 @@ class StationDialog(QDialog):
                        name=self.name.text().strip(),
                        address=[a.strip() for a in self.addr.text().split("|") if a.strip()],
                        club=self.club.text().strip(), email=self.email.text().strip(),
-                       license_class=self.lic.currentData() or "")
+                       license_class=self.lic.currentData() or "",
+                       section=self.section.text().upper().strip(), ss_check=self.ss_check.text().strip(),
+                       ss_precedence=self.ss_prec.currentData(), cwops=self.cwops.text().strip(),
+                       fd_class=self.fd_class.text().upper().strip())
 
 
 class NewLogDialog(QDialog):

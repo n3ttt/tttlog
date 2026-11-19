@@ -42,7 +42,7 @@ python -m tttlog                        # or just: tttlog
 
 Windows and Linux use the same steps (Windows: `.venv\Scripts\activate`).
 
-Optional: put a `MASTER.SCP` file in `data/` to get Super Check Partial suggestions.
+Super Check Partial: File ▸ Update Super Check Partial downloads the latest `MASTER.SCP` (the built apps already include one; the Check Partial pane says so when there's none).
 
 ## Alpha testers (no Python needed)
 
@@ -270,7 +270,9 @@ If GridTracker or JTAlert already uses port 2237, set WSJT-X and every listening
 
 Each contest is one YAML file in `tttlog/contests/rules/`. Add a new file to add a contest; nothing needs recompiling.
 
-Included: `GENERAL` (everyday log), `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`.
+Included: `GENERAL` (everyday log), `ARRL-DX-SSB` (W/VE side), `CQ-WW-SSB`, `CQ-WW-CW`, `NAQP-CW`, `NAQP-SSB`, `CWOPS-CWT`, `ARRL-SS-CW`, `ARRL-SS-SSB` (Sweepstakes), `ARRL-10`, `ARRL-160`, `ARRL-FD` (Field Day).
+
+Set your **ARRL section**, **Sweepstakes check and precedence**, **CWops member number** and **Field Day class** in Config ▸ Station profile; NAQP and CWT send the first word of your name. Serial numbers (Sweepstakes) count up by themselves, and the Entry pane's *Sent:* line shows the next one. Contests without a signal report hide the RST box. Rules files can use exchange fields checked against lists (`in: sections`, `states_provinces`...), points by mode or by location, mults per band, per mode or once, and mults limited to some countries or a continent. Check each contest's current official rules before you rely on it: ARRL and others change details from year to year.
 
 ## Your settings
 

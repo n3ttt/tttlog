@@ -1,0 +1,26 @@
+# ARRL 10-Meter Contest (second weekend of December; check the current ARRL rules)
+# W/VE send RST + state/province, DX send RST + serial. CW and phone count apart.
+# (Mexican states as mults are not counted yet: Mexico counts as a DXCC mult.)
+id: ARRL-10
+name: ARRL 10-Meter Contest
+cabrillo_contest: ARRL-10
+modes: [SSB, CW]
+bands: [10m]
+duration_hours: 48
+location: state
+
+dupe: per_mode
+
+exchange:
+  sent:
+    - {name: rst, default: {CW: "599", default: "59"}}
+    - {name: loc, label: "ST/PROV", from_station: state}
+  rcvd:
+    - {name: rst, default: {CW: "599", default: "59"}}
+    - {name: loc, label: "ST/PROV or NR", in: states_provinces, pattern: '^\d{1,4}$'}
+
+points: {type: per_mode, values: {CW: 4, SSB: 2}}
+
+mults:
+  - {type: loc, in: states_provinces, scope: per_mode, label: "St/Prov"}
+  - {type: dxcc, exclude_entities: ["United States", "Canada", "Alaska", "Hawaii"], scope: per_mode, label: "DXCC"}

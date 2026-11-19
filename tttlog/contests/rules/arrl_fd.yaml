@@ -1,0 +1,25 @@
+# ARRL Field Day (fourth full weekend of June; check the current ARRL rules)
+# Exchange: class + ARRL/RAC section (DX for stations outside). Phone 1 point, CW and
+# digital 2. Each station once per band and mode. No multipliers here: the claimed
+# score is QSO points (the power multiplier and bonus points are added on the entry form).
+id: ARRL-FD
+name: ARRL Field Day
+cabrillo_contest: ARRL-FD
+modes: [SSB, CW, FT8, FT4, RTTY]
+bands: [160m, 80m, 40m, 20m, 15m, 10m, 6m, 2m, 70cm]
+duration_hours: 24
+location: section
+
+dupe: per_band_mode
+
+exchange:
+  sent:
+    - {name: class, label: "CLASS", from_station: fd_class}
+    - {name: sec, label: "SEC", from_station: section}
+  rcvd:
+    - {name: class, label: "CLASS", pattern: '^\d{1,2}[A-F]$'}
+    - {name: sec, label: "SEC", in: sections, pattern: '^DX$'}
+
+points: {type: per_mode, values: {CW: 2, SSB: 1, DIGI: 2, default: 2}}
+
+mults: []

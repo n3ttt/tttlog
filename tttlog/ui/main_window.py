@@ -20,7 +20,7 @@ from ..contests.engine import ContestEngine, load_rules
 from ..core.cluster import (CLUSTER_KINDS, Home, describe_filter, detect_cluster_kind, filter_commands,
                             parse_spot, spot_command)
 from .. import __version__, updater
-from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty
+from ..core.cty import CtyDat, USER_DATA_DIR, data_file, download_cty, download_scp
 from ..core.db import Log
 from ..core.models import QSO, band_from_khz, band_start_khz, mode_group, utc_now
 from ..core.netsync import LogSync
@@ -127,6 +127,7 @@ class MainWindow(QMainWindow):
         self._build_menus()
         self._build_shortcuts()
         self._refresh_radio()
+        self._update_partials("")                    # says so if there's no Super Check Partial file
 
         saved_op = self._op_layout(self.current_op)
         geo = saved_op["geometry"] if saved_op else self.settings.value("geometry")
@@ -213,8 +214,10 @@ class MainWindow(QMainWindow):
         self.rst = QLineEdit("59"); self.rst.setMaximumWidth(70)
         self.exch = QLineEdit(placeholderText="EXCH")
         self.sent_lbl = QLabel()
-        for c, (lbl, wid) in enumerate([("Call", self.call), ("RST", self.rst), ("Rcvd", self.exch)]):
-            ent.addWidget(QLabel(lbl), 0, c)
+        self.rst_lbl = QLabel("RST")
+        for c, (lbl, wid) in enumerate([(QLabel("Call"), self.call), (self.rst_lbl, self.rst),
+                                        (QLabel("Rcvd"), self.exch)]):
+            ent.addWidget(lbl, 0, c)
             ent.addWidget(wid, 1, c)
         ent.addWidget(self.sent_lbl, 1, 3)
         ent.setColumnStretch(0, 3); ent.setColumnStretch(2, 2)
@@ -293,8 +296,8 @@ class MainWindow(QMainWindow):
 
         # Partials pane (SCP + log)
         self.partials = QListWidget()
-        self.partials.itemClicked.connect(lambda it: (self.call.setText(it.text()),
-                                                      self._on_call_edited(it.text())))
+        self.partials.itemClicked.connect(lambda it: (it.flags() & Qt.ItemIsEnabled) and
+                                          (self.call.setText(it.text()), self._on_call_edited(it.text())))
         self._dock("Check Partial", self.partials)
 
         # Rate pane
@@ -401,6 +404,7 @@ class MainWindow(QMainWindow):
                                 ("Export Cabrillo…", self.export_cabrillo, None),
                                 (None, None, None),
                                 ("Update country file (cty.dat)", self.update_cty, None),
+                                ("Update Super Check Partial (MASTER.SCP)", self.update_scp, None),
                                 (None, None, None),
                                 ("Quit", self.close, "Ctrl+Q")]:
             if text is None:
@@ -589,7 +593,7 @@ class MainWindow(QMainWindow):
             b.setText(f"F{i + 1} {m.get('label', '')}")
             b.setToolTip(f"{b.text()}: {m.get('text', '')}\nRight-click to edit")
         if self.engine:
-            self.sent_lbl.setText(f"Sent: {self.engine.default_rst(self.mode)} {self.engine.sent_exchange()}")
+            self._refresh_sent()
         self.settings.setValue("freq_khz", self.freq_khz)
         self._push_net_status()
         if hasattr(self, "spots_pane") and self.spots_pane.current_band != band:
@@ -637,6 +641,7 @@ class MainWindow(QMainWindow):
         self.band_pane.set_bands(list(rules["bands"]))
         self.bandmap.set_bands(list(rules["bands"]))
         self.rst.setText(self.engine.default_rst(self.mode))
+        self.rst.setVisible(self.engine.uses_rst); self.rst_lbl.setVisible(self.engine.uses_rst)
         self.exch.setPlaceholderText(" ".join(f.get("label", f["name"]).upper()
                                               for f in self.engine.rcvd_fields))
         self.sync = LogSync(self.log, self.node_id, self.net_cfg["station_name"])
@@ -700,8 +705,24 @@ class MainWindow(QMainWindow):
         else:
             self.banner(where)
 
+    def _refresh_sent(self):
+        """'Sent: 599 5' or, with a serial, the number the next QSO gets."""
+        if self.engine:
+            rst = f"{self.engine.default_rst(self.mode)} " if self.engine.uses_rst else ""
+            self.sent_lbl.setText(f"Sent: {rst}{self.engine.sent_exchange(self.qsos)}")
+
     def _update_partials(self, call):
         self.partials.clear()
+        if not self.scp:                              # only the log's own calls to go on
+            self.partials.setToolTip("No Super Check Partial file yet: File ▸ Update Super Check Partial")
+            if len(call) < 2:
+                from PySide6.QtWidgets import QListWidgetItem
+                it = QListWidgetItem("No Super Check Partial file: File ▸ Update Super Check Partial")
+                it.setFlags(Qt.NoItemFlags)
+                self.partials.addItem(it)
+                return
+        else:
+            self.partials.setToolTip("")
         if len(call) < 2 or FREQ_RE.match(call):
             return
         logged = {q.call for q in self.qsos}
@@ -741,7 +762,7 @@ class MainWindow(QMainWindow):
             self.fkey(1)                                  # send exchange
             self.exch.setFocus()
             return
-        errs = self.engine.validate_rcvd(self.exch.text())
+        errs = self.engine.validate_rcvd(self.exch.text(), call)
         if errs:
             self.banner("; ".join(errs), "#ffd166")
             self.exch.setFocus()
@@ -750,9 +771,10 @@ class MainWindow(QMainWindow):
 
     def log_qso(self):
         q = QSO(call=self.call.text().strip().upper(), freq_khz=self.freq_khz, mode=self.mode,
-                rst_sent=self.engine.default_rst(self.mode),
-                rst_rcvd=self.rst.text().strip() or self.engine.default_rst(self.mode),
-                exch_sent=self.engine.sent_exchange(), exch_rcvd=self.exch.text().strip().upper(),
+                rst_sent=self.engine.default_rst(self.mode) if self.engine.uses_rst else "",
+                rst_rcvd=(self.rst.text().strip() or self.engine.default_rst(self.mode)) if self.engine.uses_rst else "",
+                exch_sent=self.engine.sent_exchange(self.qsos, for_log=True),
+                exch_rcvd=self.exch.text().strip().upper(),
                 station_call=self.station.call, operator=self.current_op,
                 contest_id=self.engine.rules["id"])
         self.engine.annotate(q, self.qsos)
@@ -789,7 +811,7 @@ class MainWindow(QMainWindow):
             if self.spot_last_qso():
                 self.tx_lbl.setText(f"F{n + 1}: spotted last QSO to the cluster")
             return
-        exch = self.engine.sent_exchange() if self.engine else ""
+        exch = self.engine.sent_exchange(self.qsos) if self.engine else ""
         rst = self.engine.default_rst(self.mode) if self.engine else "59"
         zone = str(self.station.cq_zone)
         if self.mode == "CW":                                   # cut numbers: 599 -> 5NN
@@ -1146,6 +1168,7 @@ class MainWindow(QMainWindow):
                 self.score_lbl.setText(f"Q {s.qsos}  Pts {s.points}  Mult {s.mults}  =  {s.total:,}")
             self.score_pane.update_score(self.engine, s)
         self._refresh_rates()
+        self._refresh_sent()                         # the next serial number
         self.spots_pane.reevaluate(self.engine, self.qsos)
         self._refresh_needed()
         self._push_net_status()
@@ -1742,7 +1765,7 @@ class MainWindow(QMainWindow):
             q.rst_sent = q.rst_sent or self.engine.default_rst(q.mode)
             q.rst_rcvd = q.rst_rcvd or self.engine.default_rst(q.mode)
             if not self.engine.is_general and not q.exch_sent:
-                q.exch_sent = self.engine.sent_exchange()
+                q.exch_sent = self.engine.sent_exchange(self.qsos, for_log=True)
             self.engine.annotate(q, self.qsos)
             self.net.publish(self.sync.local_put(q))
             self.qsos.append(q)
@@ -1800,6 +1823,21 @@ class MainWindow(QMainWindow):
         self.banner(f"{who}: {text}", "#bde0fe")
 
     # ---------------------------------------------------------- data files / about
+    def update_scp(self):
+        self.banner("Downloading the latest Super Check Partial file…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        QApplication.processEvents()
+        try:
+            download_scp()
+            self.scp = self._load_scp()
+        except Exception as e:                       # network down, an error page, ...
+            QApplication.restoreOverrideCursor()
+            self.banner(f"Couldn't update Super Check Partial: {e}", "#ffd166")
+            return
+        QApplication.restoreOverrideCursor()
+        self._update_partials(self.call.text().strip().upper())
+        self.banner(f"Super Check Partial updated ({len(self.scp):,} calls)")
+
     def update_cty(self):
         self.banner("Downloading the latest country file…")
         QApplication.setOverrideCursor(Qt.WaitCursor)

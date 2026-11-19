@@ -7,8 +7,9 @@ from pathlib import Path
 
 import yaml
 
+from ..core import locations
 from ..core.cty import CtyDat
-from ..core.models import QSO
+from ..core.models import QSO, mode_group
 
 RULES_DIR = Path(__file__).parent / "rules"
 
@@ -26,6 +27,11 @@ class Station:
     club: str = ""
     email: str = ""
     license_class: str = ""    # US: Extra / Advanced / General / Technician / Novice; "" = no band limits
+    section: str = ""          # ARRL/RAC section (Sweepstakes, Field Day, 160 m)
+    ss_check: str = ""         # Sweepstakes check: two digits, the year first licensed
+    ss_precedence: str = "A"   # Sweepstakes precedence: Q A B U M S
+    cwops: str = ""            # CWops member number (CWT); blank sends your state
+    fd_class: str = ""         # Field Day class, e.g. 1D, 2A
 
 
 def list_contests() -> list[dict]:
@@ -52,10 +58,11 @@ class Score:
     mults: int = 0
     by_band: dict = field(default_factory=dict)   # band -> {"qsos","points","mults"}
     mult_sets: dict = field(default_factory=dict)  # label -> set of (band, value)
+    has_mults: bool = True                         # False (e.g. Field Day): score = points
 
     @property
     def total(self) -> int:
-        return self.points * self.mults
+        return self.points * self.mults if self.has_mults else self.points
 
 
 class ContestEngine:
@@ -69,12 +76,37 @@ class ContestEngine:
         self.sent_fields = [f for f in rules["exchange"]["sent"] if f["name"] != "rst"]
 
     # ---- exchange helpers ---------------------------------------------
-    def sent_exchange(self) -> str:
+    def next_serial(self, log: list[QSO] | None) -> int:
+        """The serial number for the next QSO (QSOs in the log + 1)."""
+        return len(log or []) + 1
+
+    def sent_exchange(self, log: list[QSO] | None = None, for_log: bool = False) -> str:
+        """What we send. A serial field is the next number; `air_only` fields (e.g. our own
+        call in Sweepstakes) are sent but not logged (`for_log`)."""
         vals = []
         for f in self.sent_fields:
+            if for_log and f.get("air_only"):
+                continue
+            if f.get("serial"):
+                vals.append(str(self.next_serial(log)))
+                continue
             src = f.get("from_station")
-            vals.append(str(getattr(self.station, src)) if src else f.get("default", ""))
-        return " ".join(vals)
+            if src:
+                v = str(getattr(self.station, src, "") or "")
+                if not v and f.get("or_station"):           # e.g. CWT: member number, else state
+                    v = str(getattr(self.station, f["or_station"], "") or "")
+                if f.get("first_word") and v:               # NAQP / CWT: first name only
+                    v = v.split()[0]
+                v = v.upper()
+                vals.append(v)
+            else:
+                vals.append(str(f.get("default", "")))
+        return " ".join(v for v in vals if v != "")
+
+    @property
+    def uses_rst(self) -> bool:
+        """False for contests without a signal report (Sweepstakes, NAQP, CWT, Field Day)."""
+        return any(f["name"] == "rst" for f in self.rules["exchange"]["rcvd"])
 
     @property
     def is_general(self) -> bool:
@@ -101,17 +133,35 @@ class ContestEngine:
             out[f["name"]] = toks[i] if i < len(toks) else ""
         return out
 
-    def validate_rcvd(self, exch: str) -> list[str]:
+    def _ok_value(self, f: dict, v: str) -> bool:
+        """A field's value is fine if it matches its pattern or is in its list (either one,
+        when a field has both: e.g. 10 m takes a state OR a serial number)."""
+        checks = []
+        if "pattern" in f:
+            checks.append(bool(re.match(f["pattern"], v)))
+        if "in" in f:
+            checks.append(v in locations.values(f["in"]))
+        return any(checks) if checks else True
+
+    def _required(self, f: dict, call: str | None) -> bool:
+        if f.get("optional"):
+            return False
+        only = f.get("required_if_entities")
+        if only and call:
+            hit = self.cty.lookup(call)
+            return bool(hit) and hit[0].name in only
+        return not only
+
+    def validate_rcvd(self, exch: str, call: str | None = None) -> list[str]:
         """Return a list of error strings (empty == valid)."""
         errs = []
         vals = self.parse_rcvd(exch)
         for f in self.rcvd_fields:
             v = vals.get(f["name"], "")
             if not v:
-                if f.get("optional"):
-                    continue
-                errs.append(f"missing {f.get('label', f['name'])}")
-            elif "pattern" in f and not re.match(f["pattern"], v):
+                if self._required(f, call):
+                    errs.append(f"missing {f.get('label', f['name'])}")
+            elif not self._ok_value(f, v):
                 errs.append(f"bad {f.get('label', f['name'])}: {v}")
         return errs
 
@@ -134,7 +184,9 @@ class ContestEngine:
         if rule == "once":
             return (q.call.upper(),)
         if rule == "per_band_mode":
-            return (q.call.upper(), q.band, q.mode)
+            return (q.call.upper(), q.band, mode_group(q.mode))
+        if rule == "per_mode":
+            return (q.call.upper(), mode_group(q.mode))
         return (q.call.upper(), q.band)
 
     def is_dupe(self, call: str, band: str, mode: str, log: list[QSO]) -> bool:
@@ -147,7 +199,11 @@ class ContestEngine:
                 continue
             if rule == "once":
                 return True
-            if q.band == band and (rule != "per_band_mode" or q.mode == mode):
+            if rule == "per_mode":
+                if mode_group(q.mode) == mode_group(mode):
+                    return True
+                continue
+            if q.band == band and (rule != "per_band_mode" or mode_group(q.mode) == mode_group(mode)):
                 return True
         return False
 
@@ -164,7 +220,7 @@ class ContestEngine:
             q.cq_zone = hit[1] if hit else None
         key = self._dupe_key(q)
         q.is_dupe = key is not None and any(self._dupe_key(p) == key for p in prior if not p.is_dupe)
-        q.points = 0 if (q.is_dupe or not self.is_valid(q)) else self._points(ent)
+        q.points = 0 if (q.is_dupe or not self.is_valid(q)) else self._points(ent, q)
         return q
 
     def is_valid(self, q: QSO) -> bool:
@@ -173,12 +229,19 @@ class ContestEngine:
         excl = self.rules.get("valid_qso", {}).get("exclude_entities", [])
         return q.country not in excl
 
-    def _points(self, ent) -> int:
+    def _points(self, ent, q: QSO | None = None) -> int:
         p = self.rules["points"]
         if p["type"] == "none":
             return 0
         if p["type"] == "fixed":
             return int(p["value"])
+        if p["type"] == "per_mode":                      # e.g. 10 m: CW 4, phone 2
+            group = mode_group(q.mode if q else "")
+            by = p["values"]
+            return int(by.get(group, by.get("DIGI" if group not in ("CW", "SSB") else group, by.get("default", 1))))
+        if p["type"] == "by_location":                   # e.g. 160 m: W/VE 2, DX 5
+            home = p.get("home_entities", locations.W_VE)
+            return int(p["home"] if ent is not None and ent.name in home else p["other"])
         if p["type"] == "cqww":
             me = self.my_entity
             if ent is None or me is None:
@@ -194,15 +257,39 @@ class ContestEngine:
         """(label, key) pairs this QSO would count toward."""
         out = []
         for m in self.rules.get("mults", []):
+            hit = None
+            if m.get("continent") or m.get("only_entities") or m.get("exclude_entities"):
+                hit = self.cty.lookup(q.call)
+                ent = hit[0] if hit else None
+                if ent is None:
+                    continue
+                if m.get("continent") and ent.continent != m["continent"]:
+                    continue
+                if m.get("only_entities") and ent.name not in m["only_entities"]:
+                    continue
+                if ent.name in m.get("exclude_entities", []):
+                    continue
             if m["type"] == "dxcc":
                 v = q.country
             elif m["type"] == "cq_zone":
                 v = q.cq_zone
+            elif m["type"] == "call":                    # e.g. CWT: each call once
+                v = q.call.upper()
             else:  # exchange field
                 v = self.parse_rcvd(q.exch_rcvd).get(m["type"])
             if v in (None, "", "?"):
                 continue
-            key = (q.band, v) if m.get("scope", "per_band") == "per_band" else (v,)
+            if m.get("in") and v not in locations.values(m["in"]):
+                continue                                 # e.g. NAQP: a state, not a DX prefix
+            scope = m.get("scope", "per_band")
+            if scope == "per_band":
+                key = (q.band, v)
+            elif scope == "per_mode":
+                key = (mode_group(q.mode), v)
+            elif scope == "per_band_mode":
+                key = (q.band, mode_group(q.mode), v)
+            else:
+                key = (v,)
             out.append((m.get("label", m["type"]), key))
         return out
 
@@ -242,10 +329,11 @@ class ContestEngine:
                 if (lbl, key) not in seen:
                     seen.add((lbl, key))
                     s.mult_sets.setdefault(lbl, set()).add(key)
-                    if len(key) == 2:
+                    if len(key) == 2 and key[0] == q.band:          # a per-band mult
                         bb["mults"] += 1
                         bb.setdefault("by_mult", {})[lbl] = bb.get("by_mult", {}).get(lbl, 0) + 1
         s.mults = len(seen)
+        s.has_mults = bool(self.rules.get("mults"))
         return s
 
     def rescore(self, log: list[QSO]) -> list[QSO]:
