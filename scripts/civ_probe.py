@@ -22,9 +22,22 @@ BAUDS = [19200, 115200, 9600, 38400, 57600, 4800]
 ADDRS = sorted({m[1] for m in civ.MODELS.values()})
 
 
-def model_for(addr):
-    names = [m[0] for k, m in civ.MODELS.items() if m[1] == addr and k != "other"]
-    return " / ".join(names) or "unknown model"
+def model_for(addr, usb_name=""):
+    """Model from the USB name (e.g. 'IC-705') if it says, else from the address."""
+    for k, m in civ.MODELS.items():
+        if k != "other" and usb_name and m[0].split(" ")[0].upper() == usb_name.strip().upper():
+            note = "" if m[1] == addr else f", address changed from its default {m[1]:02X}h"
+            return m[0] + note, k
+    names = [(m[0], k) for k, m in civ.MODELS.items() if m[1] == addr and k != "other"]
+    return (" / ".join(n for n, _ in names), names[0][1]) if names else ("unknown model", "other")
+
+
+def is_radio_port(p) -> bool:
+    """USB serial ports only: skip Bluetooth speakers, headsets, debug consoles."""
+    name = p.portName().lower()
+    if any(s in name for s in ("bluetooth", "debug-console", "wlan")):
+        return False
+    return p.hasVendorIdentifier() or any(s in name for s in ("usb", "slab", "serial", "ttyacm", "com"))
 
 
 def exchange(port, frames, wait=0.35):
@@ -59,9 +72,9 @@ def probe(info):
                 print(f"   {baud:>6} baud: no answer")
                 continue
             for addr in radios:
-                d = civ.IcomDialect(addr=addr, model=next((k for k, m in civ.MODELS.items()
-                                                            if m[1] == addr), "other"))
-                print(f"   {baud:>6} baud: ✓ Icom at CI-V address {addr:02X}h  ({model_for(addr)})")
+                label, key = model_for(addr, info.description())
+                d = civ.IcomDialect(addr=addr, model=key)
+                print(f"   {baud:>6} baud: ✓ Icom at CI-V address {addr:02X}h  ({label})")
                 state = {}
                 for _ in range(3):                        # freq, mode, data (a few tries)
                     for body in exchange(port, d.poll(), 0.4):
@@ -72,7 +85,8 @@ def probe(info):
                 print(f"          frequency {state.get('freq', '?')} kHz, mode {state.get('mode', '?')}")
                 print(f"          DATA mode query: {'works' if d.data_ok else 'not supported'};"
                       f" CW text over CI-V: {'yes' if d.can_cw else 'no (use DTR/RTS keying)'}")
-                print(f"\n   In tttlog: Config ▸ Radio ▸ Icom, model {model_for(addr)}, address {addr:02X},"
+                model_name = civ.MODELS[key][0] if key != "other" else "Other Icom"
+                print(f"\n   In tttlog: Config ▸ Radio ▸ Icom, model {model_name}, address {addr:02X},"
                       f" Serial / USB {info.portName()} at {baud} baud.")
             return True
         print("   no Icom answered. On the radio check CI-V Baud Rate (try 19200), and that the")
@@ -99,7 +113,7 @@ def main():
     for p in ports:
         if want and want not in (p.systemLocation(), p.portName()):
             continue
-        if not want and any(s in p.portName().lower() for s in ("bluetooth", "debug-console", "wlan")):
+        if not want and not is_radio_port(p):
             continue
         print(f"\n{p.systemLocation()}  ({p.description() or '?'})")
         found = probe(p) or found
