@@ -23,6 +23,7 @@ class RigControl(QObject):
     freqChanged = Signal(float)          # kHz, from the radio
     modeChanged = Signal(str)            # radio mode name (USB, CWU, DIGU...)
     stateChanged = Signal(str)
+    refused = Signal(str)                # the radio said NG to something (e.g. "cw")
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,6 +162,11 @@ class RigControl(QObject):
     def _take(self, kind: str, val) -> None:
         if val is None:
             return
+        if kind == "refused":
+            self.refused.emit(str(val))
+            return
+        if kind == "bkin":
+            return                                   # kept on the dialect (dialect.bkin)
         self._last_heard = time.monotonic()
         name = self.cfg.get("dialect", "flex")
         if name == "icom":
@@ -202,6 +208,15 @@ class RigControl(QObject):
     def cw_commands(self, text: str) -> list[bytes]:
         d = self.dialect
         return d.cw(K.cw_text(text)) if hasattr(d, "cw") else K.cw_commands(self.dialect_name, text)
+
+    def cw_setup_commands(self) -> tuple[list[bytes], str]:
+        """Anything the radio needs before CAT CW goes on the air, and a note saying
+        what was changed. Icom: CW text only transmits with break-in on, so turn
+        on semi break-in if it's off (or not known yet)."""
+        d = self.dialect
+        if hasattr(d, "set_bkin") and d.bkin not in (1, 2):
+            return [d.set_bkin(1)], "Turned on semi break-in (BK-IN): Icom radios only send CI-V CW with break-in on"
+        return [], ""
 
     def cw_abort_commands(self) -> list[bytes]:
         d = self.dialect

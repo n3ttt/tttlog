@@ -76,6 +76,8 @@ class FakeIcom:
         self.freq_hz, self.mode, self.filt, self.data = 14_074_000, 0x01, 1, True
         self.writes: list[bytes] = []
         self.ptt = False
+        self.bkin = 0                      # break-in OFF, like the user's IC-705
+        self.sent_on_air: list[bytes] = []
         self.server = QTcpServer()
         assert self.server.listen(QHostAddress.LocalHost, 0)
         self.server.newConnection.connect(self._conn)
@@ -103,6 +105,11 @@ class FakeIcom:
                     self.reply(c, 0x03, to_bcd(self.freq_hz, 5))
                 elif cmd == 0x04:
                     self.reply(c, 0x04, bytes([self.mode, self.filt]))
+                elif cmd == 0x16 and data == b"\x47":
+                    self.reply(c, 0x16, bytes([0x47, self.bkin]))
+                elif cmd == 0x17 and data != b"\xff" and self.mode not in (0x03, 0x07):
+                    self.writes.append(f)
+                    self.reply(c, 0xFA)                     # CW text outside CW mode: NG
                 elif cmd == 0x1A and data[:1] == b"\x06" and len(data) == 1:
                     if self.data_ok:
                         self.reply(c, 0x1A, bytes([0x06, int(self.data), self.filt if self.data else 0]))
@@ -118,6 +125,10 @@ class FakeIcom:
                         self.data = bool(data[1])
                     elif cmd == 0x1C:
                         self.ptt = bool(data[1])
+                    elif cmd == 0x16 and data[:1] == b"\x47":
+                        self.bkin = data[1]
+                    elif cmd == 0x17 and data != b"\xff" and (self.bkin or self.ptt):
+                        self.sent_on_air.append(data)       # only with break-in on (or PTT)
                     self.reply(c, 0xFB)
         c.readyRead.connect(read)
 
@@ -179,6 +190,54 @@ def test_cw_and_ptt_on_an_icom(app, win):  # noqa: F811
     assert any(f[2] == 0x14 and f[3:] == bytes.fromhex("0c0134") for f in radio.writes)   # 28 wpm
     sent = b"".join(f[3:] for f in radio.writes if f[2] == 0x17)
     assert b"N3TTT" in sent
+    assert radio.bkin == 1 and radio.sent_on_air                               # break-in turned on first
+    assert "semi break-in" in win.banner_lbl.text()
     win.escape()                                                               # abort: stop CW, receive
     assert _pump(app, lambda: any(f[2] == 0x17 and f[3:] == b"\xff" for f in radio.writes))
+    win.rig.stop()
+
+
+def test_icom_break_in_already_on_is_left_alone(app, win):  # noqa: F811
+    radio = FakeIcom()
+    radio.mode, radio.data, radio.bkin = 0x03, False, 2                        # full break-in
+    win.rig.start(_cfg(radio, control=False))
+    win.keyer.configure({**config.DEFAULT_KEYER, "allow_tx": True})
+    assert _pump(app, lambda: win.mode == "CW" and win.rig.dialect.bkin == 2)  # read while in CW
+    win.call.setText("DL1ABC"); win.fkey(0)
+    assert _pump(app, lambda: radio.sent_on_air)
+    assert radio.bkin == 2 and not any(f[2] == 0x16 and len(f) > 4 for f in radio.writes)
+    win.rig.stop()
+
+
+def test_icom_refuses_cw_outside_cw_mode(app, win):  # noqa: F811
+    radio = FakeIcom()
+    radio.mode, radio.data = 0x01, False                                       # radio left in USB
+    win.rig.start(_cfg(radio, control=False))
+    win.keyer.configure({**config.DEFAULT_KEYER, "allow_tx": True})
+    assert _pump(app, lambda: win.rig.is_connected() and win.mode == "SSB")
+    win.mode = "CW"                                                            # tttlog thinks CW
+    assert win.keyer.send_cw("TEST")
+    assert _pump(app, lambda: "refused the CW" in win.banner_lbl.text())
+    assert not win.keyer.keyed
+    win.rig.stop()
+
+
+def test_stale_transmit_off_banner_clears(app, win, monkeypatch):  # noqa: F811
+    from tttlog.ui import main_window as mw
+    radio = FakeIcom()
+    radio.mode, radio.data = 0x03, False
+    win.rig.start(_cfg(radio, control=False))
+    assert _pump(app, lambda: win.mode == "CW")
+    win.keyer.configure({**config.DEFAULT_KEYER, "allow_tx": False})
+    win.call.setText("DL1ABC"); win.fkey(0)
+    assert "Allow tttlog to transmit" in win.banner_lbl.text()
+
+    class Dlg:                                                                 # user ticks Allow, OK
+        def __init__(self, *a): pass
+        def exec(self): return True
+        def values(self): return {**config.DEFAULT_KEYER, "allow_tx": True}
+    monkeypatch.setattr(mw, "KeyerDialog", Dlg)
+    monkeypatch.setattr(config, "save_keyer", lambda cfg: None)
+    win.edit_keyer()
+    assert "Allow tttlog to transmit" not in win.banner_lbl.text()
     win.rig.stop()

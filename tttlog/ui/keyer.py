@@ -277,6 +277,7 @@ class Keyer(QObject):
     stateChanged = Signal(str)           # "" = idle
     levelChanged = Signal(float)
     problem = Signal(str)
+    notice = Signal(str)                   # something worth saying that isn't a problem
     recorded = Signal(str)               # path of a new recording
 
     def __init__(self, rig, parent=None):
@@ -424,6 +425,11 @@ class Keyer(QObject):
         self._set_state(f"TX CW {self.wpm} wpm: {txt}")
         self._limit.start(int(min(float(self.cfg.get("max_tx_secs", 90)), secs + 5) * 1000))
         if self.cfg.get("cw", "cat") == "cat":
+            setup, note = self.rig.cw_setup_commands()
+            for cmd in setup:
+                self.rig.send_raw(cmd)
+            if note:
+                self.notice.emit(note)
             self.rig.send_raw(self.rig.cw_speed_command(self.wpm))
             for cmd in self.rig.cw_commands(txt):
                 self.rig.send_raw(cmd)

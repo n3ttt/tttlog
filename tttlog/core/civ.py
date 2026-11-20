@@ -7,6 +7,8 @@ Frame:  FE FE <to> <from> <cmd> [<sub>] [data...] FD
         controller (tttlog) = E0; to = 00 is a "transceive" broadcast the radio
         sends by itself when the dial or mode changes (CI-V Transceive ON).
 Replies to commands that don't return data: FB = OK, FA = NG (not accepted).
+CW text (17) only goes on the air in CW mode with break-in (BK-IN) on, or PTT
+keyed (IC-705 / IC-7300 CI-V reference); with break-in off you hear sidetone only.
 On a single-wire CI-V bus (CT-17, or USB with "CI-V USB Echo Back" ON) we
 also hear our own frames; those are ignored.
 """
@@ -21,6 +23,7 @@ C_SND_FREQ, C_SND_MODE = 0x00, 0x01        # transceive broadcasts (no ack)
 C_RD_FREQ, C_RD_MODE = 0x03, 0x04
 C_SET_FREQ, C_SET_MODE = 0x05, 0x06
 C_CTL_LVL, S_LVL_KEYSPD = 0x14, 0x0C
+C_CTL_FUNC, S_FUNC_BKIN = 0x16, 0x47          # break-in: 00 off, 01 semi, 02 full
 C_SND_CW = 0x17
 C_CTL_MEM = 0x1A                             # sub 0x06 = data mode (0x04 on the IC-7200)
 C_CTL_PTT, S_PTT = 0x1C, 0x00
@@ -139,6 +142,8 @@ class IcomDialect:
     data_ok: bool = True           # radio answers the data-mode query
     _asked_data: bool = field(default=False, repr=False)
     _naks: int = field(default=0, repr=False)
+    bkin: int | None = None        # break-in as last read: 0 off, 1 semi, 2 full
+    _cw_sent_at: float = field(default=0.0, repr=False)
 
     @property
     def data_sub(self) -> int | None:
@@ -154,6 +159,8 @@ class IcomDialect:
     # -- queries -----------------------------------------------------------
     def poll(self) -> list[bytes]:
         q = [self._f(C_RD_FREQ), self._f(C_RD_MODE)]
+        if self.can_cw and self.base_mode in (0x03, 0x07):     # in CW: keep break-in known
+            q.append(self._f(C_CTL_FUNC, S_FUNC_BKIN))
         if self.data_sub is not None:
             q.append(self._f(C_CTL_MEM, self.data_sub))
             self._asked_data = True
@@ -184,7 +191,14 @@ class IcomDialect:
     def cw_speed(self, wpm: int) -> bytes:
         return self._f(C_CTL_LVL, S_LVL_KEYSPD, to_bcd_be(cw_speed_level(wpm), 2))
 
+    def set_bkin(self, value: int = 1) -> bytes:
+        """Break-in: 0 off, 1 semi, 2 full."""
+        self.bkin = value
+        return self._f(C_CTL_FUNC, S_FUNC_BKIN, bytes([value]))
+
     def cw(self, text: str) -> list[bytes]:
+        import time
+        self._cw_sent_at = time.monotonic()
         t = cw_clean(text)
         return [self._f(C_SND_CW, data=t[i:i + CW_CHUNK].encode("ascii"))
                 for i in range(0, len(t), CW_CHUNK) if t[i:i + CW_CHUNK].strip()]
@@ -209,6 +223,10 @@ class IcomDialect:
         if frm == CTRLID or to not in (CTRLID, 0x00) or frm != self.addr:
             return []                                # our own echo, or another device
         if cmd == NAK:
+            import time
+            if self._cw_sent_at and time.monotonic() - self._cw_sent_at < 1.5:
+                self._cw_sent_at = 0.0
+                return [("refused", "cw")]
             # The data-mode query is the only one older radios refuse. Give up on
             # it after a few NGs in a row (one NG could be a refused tuning command).
             if self._asked_data:
@@ -228,6 +246,9 @@ class IcomDialect:
             if len(data) > 1 and 1 <= data[1] <= 3:
                 self.filt = data[1]
             return [("mode", self.mode_name())]
+        if cmd == C_CTL_FUNC and len(data) >= 2 and data[0] == S_FUNC_BKIN:
+            self.bkin = data[1]
+            return [("bkin", data[1])]
         sub = self.data_sub
         if cmd == C_CTL_MEM and sub is not None and len(data) >= 2 and data[0] == sub:
             self._asked_data, self._naks = False, 0

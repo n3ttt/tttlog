@@ -390,7 +390,9 @@ class MainWindow(QMainWindow):
         # Voice + CW keyer (transmits only when Config ▸ Voice & CW keyer allows it)
         self.keyer = Keyer(self.rig, self)
         self.keyer.stateChanged.connect(self._on_keyer_state)
-        self.keyer.problem.connect(lambda why: self.banner(why, "#ffd166"))
+        self.keyer.problem.connect(self._keyer_problem)
+        self.keyer.notice.connect(lambda text: self.banner(text, "orange"))
+        self.rig.refused.connect(self._rig_refused)
         self.keyer.recorded.connect(self._on_recorded)
 
     def _dock(self, title, widget, closable=True, scroll=True):
@@ -902,6 +904,15 @@ class MainWindow(QMainWindow):
         config.save_keyer(self.keyer_cfg)
         self.tx_lbl.setText(f"CW speed {wpm} wpm")
 
+    def _keyer_problem(self, why: str):
+        self._last_keyer_problem = why
+        self.banner(why, "#ffd166")
+
+    def _rig_refused(self, what: str):
+        if what == "cw":
+            self.keyer.stop()
+            self.banner("The radio refused the CW: put it in CW mode (with BK-IN on)", "#ffd166")
+
     def edit_keyer(self):
         self.keyer_cfg["wpm"] = self.keyer.wpm
         dlg = KeyerDialog(self.keyer_cfg, self.keyer, self.macros,
@@ -910,6 +921,11 @@ class MainWindow(QMainWindow):
             self.keyer_cfg = dlg.values()
             config.save_keyer(self.keyer_cfg)
         self.keyer.configure(self.keyer_cfg)
+        # a "can't transmit because..." banner from before is stale now: re-check it
+        last = getattr(self, "_last_keyer_problem", "")
+        if last and self.banner_lbl.text() == last and self.keyer.why_not(cw=self.mode == "CW") != last:
+            self.banner("")
+            self._last_keyer_problem = ""
 
     # ---------------------------------------------------------- radio
     def set_freq(self, khz: float, from_rig: bool = False):

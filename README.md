@@ -245,7 +245,7 @@ Config ▸ Voice & CW keyer… sets it up. Nothing is ever transmitted until you
 |---|---|---|---|---|
 | Audio to the radio | the DAX TX device; turn on DAX for the transmit slice | USB Audio CODEC; radio menu SSB MOD SOURCE = REAR | the radio's USB audio | USB Audio CODEC; radio menu DATA MOD = USB (and MOD input for SSB = USB) |
 | PTT | Radio CAT command (`ZZTX1;`) | Radio CAT command (`TX1;`) | Radio CAT command (`TX1;`) | CI-V `1C 00 01` |
-| CW | Radio sends the text (`KY`) | DTR on the Standard COM port (radio menu PC KEYING = DTR); CAT can't send text | Radio sends the text (`KY`) | Radio sends the text (CI-V `17`, speed `14 0C`). IC-7200, IC-7000, IC-756 and IC-746PRO can't: use DTR/RTS keying |
+| CW | Radio sends the text (`KY`) | DTR on the Standard COM port (radio menu PC KEYING = DTR); CAT can't send text | Radio sends the text (`KY`) | Radio sends the text (CI-V `17`, speed `14 0C`). The radio must be in CW mode, and Icom only puts CI-V CW on the air with **break-in (BK-IN) on**: tttlog turns on semi break-in if it's off, and says so. IC-7200, IC-7000, IC-756 and IC-746PRO can't send CW text: use DTR/RTS keying |
 
 **Cut numbers (CW):** by default the RST goes out as **5NN** instead of 599. In Config ▸ Voice & CW keyer pick None, 9 → N and 0 → T, 1 → A as well, or the full set (1 A, 2 U, 3 V, 5 E, 7 B, 8 D, 9 N, 0 T). Tick **Also in the exchange** to cut the zone or serial number too (zone 5 → E, serial 001 → TTA). The RST's first digit always stays a number, and callsigns are never cut. Only what's sent changes; the log keeps 599.
 
