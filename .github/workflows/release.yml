@@ -2,11 +2,18 @@
 # "Set as a pre-release" for alphas) -> this builds Mac (Apple Silicon + Intel),
 # Windows and Linux and attaches them to that release.
 # The in-app updater (Help > Check for updates) reads these releases.
+# If attaching failed, Actions > Release > Run workflow (from main) with the
+# release's tag builds again and attaches to that existing release.
 name: Release
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach builds to (e.g. v0.1.0a4)"
+        required: true
 
 permissions:
   contents: write
@@ -27,8 +34,20 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      # download-artifact unpacks .zip artifacts, so the Windows zip arrives as its
+      # tttlog/ folder: zip it back up under its versioned name (taken from the
+      # Linux file next to it, tttlog-<version>-b<build>-linux-x86_64.tar.gz).
+      - name: Re-zip the Windows build
+        working-directory: out
+        run: |
+          set -e
+          if [ -d tttlog ]; then
+            base=$(ls tttlog-*-linux-x86_64.tar.gz | sed 's/-linux-x86_64\.tar\.gz$//')
+            zip -qr "$base-windows.zip" tttlog
+            rm -rf tttlog
+          fi
       - run: ls -la out
       - name: Attach builds to the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" out/* --clobber --repo "${{ github.repository }}"
+        run: gh release upload "${{ github.event.release.tag_name || inputs.tag }}" out/* --clobber --repo "${{ github.repository }}"
