@@ -25,3 +25,10 @@ points: {type: fixed, value: 3}
 
 mults:
   - {type: dxcc, scope: per_band, label: "DXCC"}
+
+# Multi-op band changes (ARRL DX rules v2.0, HCAT.4): Multioperator Single Transmitter
+# at most 10 band changes per clock hour; Two Transmitter 6 per clock hour per
+# transmitter (unused changes can't move between transmitters).
+multi_op:
+  MS: {changes_per_hour: 10}
+  M2: {changes_per_hour: 6}

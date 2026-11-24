@@ -852,3 +852,59 @@ class CallbookDialog(QDialog):
     def values(self) -> dict:
         return {"enabled": self.enabled.isChecked(), "user": self.user.text().strip(),
                 "password": self.password.text()}
+
+
+class CategoryDialog(QDialog):
+    """Entry category for this log, and what this computer is in it (run / mult station,
+    transmitter 1 / 2): sets the band-change rule tttlog keeps you inside."""
+
+    def __init__(self, category: str, role: str, rules: dict, parent=None):
+        super().__init__(parent)
+        from ..core import band_rules
+        self._br = band_rules
+        self._rules = rules
+        self.setWindowTitle("Entry category")
+        f = QFormLayout(self)
+        self.cat = QComboBox()
+        for k, label in band_rules.CATEGORIES.items():
+            self.cat.addItem(label, k)
+        self.cat.setCurrentIndex(max(0, self.cat.findData(category)))
+        self.role = QComboBox()
+        self._role0 = role
+        self.info = QLabel()
+        self.info.setWordWrap(True)
+        self.info.setMinimumWidth(380)
+        f.addRow("Category", self.cat)
+        f.addRow("This computer is", self.role)
+        f.addRow(self.info)
+        self.cat.currentIndexChanged.connect(self._sync)
+        self._sync()
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        f.addRow(bb)
+
+    def _sync(self):
+        cat = self.cat.currentData()
+        keep = self.role.currentData() or self._role0
+        self.role.clear()
+        for k, label in self._br.ROLES.get(cat, {}).items():
+            self.role.addItem(label, k)
+        self.role.setCurrentIndex(max(0, self.role.findData(keep)))
+        self.role.setEnabled(self.role.count() > 0)
+        lim = self._br.limits(self._rules, cat)
+        name = self._rules.get("name", "this contest")
+        if cat in ("", "MM"):
+            txt = "No band-change limit: spots on any band go straight there."
+        elif lim:
+            txt = (f"{name}: {self._br.describe(lim)}, counted from the QSOs this computer logs. "
+                   "Clicking a spot on another band asks first and says whether it's allowed now.")
+            if lim.get("mult_station"):
+                txt += (" The multiplier station keeps its own 10-minute clock, may only work new "
+                        "multipliers on a band other than the run station's, and may not call CQ.")
+        else:
+            txt = (f"tttlog doesn't know {name}'s band-change rule for this category: spots on "
+                   "another band still ask first. Check the contest's rules.")
+        self.info.setText(txt)
+
+    def values(self) -> tuple[str, str]:
+        return self.cat.currentData() or "", self.role.currentData() or ""

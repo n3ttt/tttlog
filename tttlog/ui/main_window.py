@@ -42,7 +42,7 @@ from .rate_pane import RatePane
 from .score_pane import ScorePane
 from .rig_control import RigControl
 from .broadcast import Broadcaster
-from ..core import geo
+from ..core import band_rules, geo
 from ..core.callbook import HamQTH, location as callbook_location, looks_like_call
 from .keyer import Keyer
 from .wsjtx_listener import WsjtxListener
@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         self.beam_lbl = QLabel()
         self.beam_lbl.setToolTip("Beam heading to the station in the entry line (Alt+J turns the rotor)")
         top.addWidget(self.beam_lbl)
+        self.bandrule_lbl = QLabel()                  # multi-op: where the band-change rule stands
+        self.bandrule_lbl.setStyleSheet("padding: 0 4px; border-radius: 3px;")
+        top.addWidget(self.bandrule_lbl)
         top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
         top.addWidget(self.clock_lbl)
         top.addStretch(); top.addWidget(self.score_lbl)
@@ -434,6 +437,7 @@ class MainWindow(QMainWindow):
         op.addAction(QAction("Operator on (OPON)…", self, shortcut="Ctrl+Shift+O",
                              triggered=lambda: self.opon()))
         op.addAction(QAction("Operator's license class…", self, triggered=self.ask_license_class))
+        op.addAction(QAction("Entry category (multi-op band rules)…", self, triggered=self.edit_category))
         self.mode_menu = op.addMenu("Mode")
         self._build_mode_menu(["SSB", "CW"])
         op.addAction(QAction("Delete selected QSO", self, shortcut="Ctrl+D", triggered=self.delete_selected))
@@ -578,12 +582,15 @@ class MainWindow(QMainWindow):
             self._refresh_rates(now)
             if self.spots_pane.prune(now):
                 self._refresh_needed()
+        if self._ticks % 5 == 0:
+            self._refresh_band_rule(now)
 
     def _refresh_rates(self, now=None):
         self.rate_pane.update_rates(self.qsos, self.engine, now or utc_now(), me=self.current_op)
 
     def _refresh_radio(self):
         self._sync_mode_box()
+        self._refresh_band_rule()
         if hasattr(self, "bandmap"):
             self.bandmap.set_radio(self.freq_khz, band_from_khz(self.freq_khz))
         if hasattr(self, "broadcast"):
@@ -646,6 +653,8 @@ class MainWindow(QMainWindow):
         cid = self.log.get_meta("contest_id", "ARRL-DX-SSB")
         rules = load_rules(cid)
         self.engine = ContestEngine(rules, self.cty, self.station)
+        self.category = self.log.get_meta("category", "")      # multi-op entry category (MS, M2...)
+        self.tx_role = self.log.get_meta("tx_role", "")        # what this computer is in it
         self.mode = rules["modes"][0]
         self._build_mode_menu(rules["modes"])
         self.band_pane.set_bands(list(rules["bands"]))
@@ -1079,6 +1088,87 @@ class MainWindow(QMainWindow):
                                     f"Needed mults spotted show here · {self._key('go_needed')} go · "
                                     f"{self._key('swap_run')} back to run")
 
+    # ---------------------------------------------------------- multi-op band-change rules
+    def _band_limits(self) -> dict:
+        return band_rules.limits(self.engine.rules if self.engine else {}, getattr(self, "category", ""))
+
+    def _my_qsos(self) -> list:
+        """This transmitter's QSOs: the ones logged on this computer."""
+        me = self.net_cfg.get("station_name", "") or ""
+        return [q for q in self.qsos if (q.station_name or "") == me]
+
+    def _category_name(self) -> str:
+        cat = getattr(self, "category", "")
+        short = {"MS": "M/S", "M2": "M/2", "MM": "M/M"}.get(cat, "")
+        role = {"run": "run", "mult": "mult station", "tx1": "TX1", "tx2": "TX2"}.get(getattr(self, "tx_role", ""), "")
+        return f"{short} {role}".strip()
+
+    def _refresh_band_rule(self, now=None):
+        """The status line: this transmitter's band, and when it may change (red if the
+        radio is on another band and a QSO there would break the rule)."""
+        if not hasattr(self, "bandrule_lbl"):
+            return
+        lim = self._band_limits() if self.engine else {}
+        if not lim:
+            self.bandrule_lbl.setText(""); self.bandrule_lbl.setStyleSheet("")
+            return
+        radio = band_from_khz(self.freq_khz)
+        chk = band_rules.check(lim, self._my_qsos(), radio, now or utc_now())
+        text = f"{self._category_name()}: {chk.status or 'no QSOs yet'}"
+        if not chk.ok:
+            text = f"{self._category_name()}: {chk.why} — go back to {chk.current}"
+            style = "background:#ff6b6b; color:black;"
+        elif "free to change" in chk.status:
+            style = "background:#ffd166; color:black;"
+        else:
+            style = ""
+        self.bandrule_lbl.setText(text)
+        self.bandrule_lbl.setStyleSheet("padding: 0 4px; border-radius: 3px;" + style)
+        self.bandrule_lbl.setToolTip(f"{band_rules.CATEGORIES.get(self.category, '')}: "
+                                     f"{band_rules.describe(lim)} (Operating ▸ Entry category)")
+
+    def _approve_band_change(self, s) -> bool:
+        """Multi-Single / Multi-Two: a spot on a band other than this transmitter's asks
+        before going, saying whether the contest's band-change rule allows it now."""
+        cat = getattr(self, "category", "")
+        if cat not in ("MS", "M2") or not self.engine or s.band is None:
+            return True
+        lim = self._band_limits()
+        mine = self._my_qsos()
+        chk = band_rules.check(lim, mine, s.band, utc_now())
+        current = chk.current or band_from_khz(self.freq_khz)
+        mult_only = cat == "MS" and self.tx_role == "mult" and s.status != "MULT"
+        if (current is None or s.band == current) and not mult_only:
+            return True                                    # not a band change
+        lines = [f"{s.call} is on {s.band}; this station is on {current}."]
+        if not lim:
+            lines.append(f"tttlog has no band-change rule for {self._category_name()} in "
+                         f"{self.engine.rules['name']}: check the contest's rules.")
+        elif not chk.ok:
+            lines.append(f"NOT ALLOWED NOW: {chk.why}.")
+        elif chk.current:
+            lines.append(f"Allowed ({band_rules.describe(lim)}): {chk.status}. "
+                         f"A QSO there counts as a band change.")
+        if mult_only:
+            lines.append("This is the multiplier station: it may only work new multipliers, and this spot isn't one.")
+        lines.append(f"Go to {s.band}?")
+        ok = chk.ok and not mult_only
+        ans = QMessageBox.question(self, "Band change", "\n\n".join(lines),
+                                   QMessageBox.Yes | QMessageBox.No,
+                                   QMessageBox.Yes if ok else QMessageBox.No)
+        return ans == QMessageBox.Yes
+
+    def edit_category(self):
+        if not self._need_log():
+            return
+        from .dialogs import CategoryDialog
+        dlg = CategoryDialog(self.category, self.tx_role, self.engine.rules, self)
+        if dlg.exec():
+            self.category, self.tx_role = dlg.values()
+            self.log.set_meta("category", self.category)
+            self.log.set_meta("tx_role", self.tx_role)
+            self._refresh_band_rule()
+
     # ---------------------------------------------------------- beam heading / rotor
     def _my_latlon(self) -> tuple[float, float] | None:
         ll = geo.grid_to_latlon(self.station.grid)
@@ -1239,6 +1329,7 @@ class MainWindow(QMainWindow):
         self._refresh_sent()                         # the next serial number
         self.spots_pane.reevaluate(self.engine, self.qsos)
         self._refresh_needed()
+        self._refresh_band_rule()
         self._push_net_status()
 
     def _selected_qso(self) -> QSO | None:
@@ -1454,7 +1545,8 @@ class MainWindow(QMainWindow):
                                            "Cabrillo (*.log *.cbr)")
         if p:
             n = export_cabrillo(self.qsos, self.engine, p,
-                                category={"MODE": self.engine.rules["modes"][0]})
+                                category={"MODE": self.engine.rules["modes"][0],
+                                          **band_rules.CABRILLO.get(self.category, {})})
             self.banner(f"Exported {n} QSOs to {p} — check the CATEGORY lines before submitting")
 
     def import_adif(self):
@@ -1651,8 +1743,12 @@ class MainWindow(QMainWindow):
         config.save_cluster(self.cluster_cfg)
         self.telnet_pane.button_box.setVisible(bool(show))
 
-    def go_to_spot(self, s):
-        """QSY to a spot and put the call in the entry line (S&P)."""
+    def go_to_spot(self, s) -> bool:
+        """QSY to a spot and put the call in the entry line (S&P). Multi-op: a spot that
+        would be a band change asks first (False if you say no)."""
+        if not self._approve_band_change(s):
+            self.call.setFocus()
+            return False
         if self.run_mode:                            # keep the run frequency to come back to
             self.run_memory = {"freq": self.freq_khz, "mode": self.mode}
             self.sp_memory = None
@@ -1663,6 +1759,7 @@ class MainWindow(QMainWindow):
         self.wipe()
         self.call.setText(s.call)
         self._on_call_edited(s.call)
+        return True
 
     def chase_list(self) -> list:
         """Needed spots in jump order: mults (newest first), then new Qs if there are no

@@ -171,7 +171,18 @@ A grid of every possible mult (every DXCC entity, or CQ zones 1–40) against ea
 | **Worked** ✓ | already have it | grey |
 
 Unticking a state hides those cells, and hides any row left with nothing to show. Ticking only **Needed & spotted** gives a short list of mults you can go work now.
-The drop-down switches between mult types (for example Zones and Countries in CQWW), and the search box filters by prefix, country, or zone. Double-click a spotted cell to go to the newest spot for it.
+The drop-down switches between mult types (for example Zones and Countries in CQWW), and the search box filters by prefix, country, or zone. The **Spotted** column shows the newest spot you still need for that mult, with its band, frequency and call (e.g. *20m 14025.0 JA1ABC*). Click it, or any spotted cell, to go there.
+
+### Multi-op band-change rules
+
+Operating ▸ **Entry category (multi-op band rules)…** sets the log's category (Single op, Multi-Single, Multi-Two, Multi-Multi) and what this computer is in it (run or multiplier station; transmitter 1 or 2). It also sets the Cabrillo CATEGORY-OPERATOR / TRANSMITTER lines. Band changes are counted from the QSOs each computer logs:
+
+| Contest | Multi-Single | Multi-Two |
+|---|---|---|
+| CQ WW (CW, SSB) | 10-minute rule from the first QSO on a band; a multiplier station may work new mults on another band, with its own 10-minute clock, and may not CQ | 8 band changes per clock hour per transmitter |
+| ARRL DX | 10 band changes per clock hour | 6 band changes per clock hour per transmitter |
+
+In Multi-Single or Multi-Two, clicking a spot (or Ctrl+G, the bandmap, the needed lists) on a band other than this station's asks first, saying whether the rule allows it now; when it doesn't, *No* is the default. The top bar shows where the rule stands (e.g. *M/S run: on 20m since 1412Z, free to change at 1422Z*), yellow while the band is locked, red if the radio is on another band and a QSO there would break the rule. Check each contest's current rules before the contest.
 Colors and checkbox choices are saved in `~/.tttlog/colors.yaml`.
 
 ## General log

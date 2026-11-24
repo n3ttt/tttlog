@@ -2,8 +2,9 @@
 
 Tick the states you want to see (each with its own color). Rows with nothing
 in a ticked state are hidden, so "Needed & spotted" alone gives a short list
-of mults you can go and work right now. Double-click a spotted cell to go to
-the newest spot for it.
+of mults you can go and work right now. The Spotted column says where the
+newest spot you still need is (band, kHz, call); click it, or any spotted cell,
+to go there.
 """
 from __future__ import annotations
 
@@ -70,7 +71,7 @@ class NeededPane(QWidget):
         self.table.verticalHeader().setDefaultSectionSize(18)
         self.table.horizontalHeader().setMinimumSectionSize(20)
         self.table.setStyleSheet("QTableWidget { font-size: 10pt; } QHeaderView::section { padding: 0 1px; }")
-        self.table.cellDoubleClicked.connect(self._activate)
+        self.table.cellClicked.connect(self._activate)
         self.table.setFocusPolicy(Qt.ClickFocus)
         v.addWidget(self.table, 1)
         self.refreshes = 0
@@ -118,17 +119,28 @@ class NeededPane(QWidget):
                 and (not q or q in r.title.upper())]
         self._rows, self._cols = rows, cols
 
-        hdr = ["Mult"] + [c.removesuffix("m") for c in cols]
+        hdr = ["Mult"] + [c.removesuffix("m") for c in cols] + ["Spotted"]
+        self._spot_col = len(hdr) - 1
         if t.columnCount() != len(hdr):
             t.setColumnCount(len(hdr))
         t.setHorizontalHeaderLabels(hdr)
         t.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for c in range(1, len(hdr)):
+        for c in range(1, len(hdr) - 1):
             t.horizontalHeader().setSectionResizeMode(c, QHeaderView.Fixed)
             t.setColumnWidth(c, BAND_COL_W)
+        t.horizontalHeader().setSectionResizeMode(self._spot_col, QHeaderView.ResizeToContents)
         t.setRowCount(len(rows))
         for r, row in enumerate(rows):
             t.setItem(r, 0, QTableWidgetItem(row.title))
+            best = self._best_spot(row)
+            sp_it = QTableWidgetItem(f"{best.band or ''} {best.freq_khz:.1f} {best.call}" if best else "")
+            if best:
+                bg = self.colors["needed_spotted"]["color"]
+                sp_it.setBackground(QBrush(QColor(bg)))
+                sp_it.setForeground(QBrush(QColor(text_color_for(bg))))
+                sp_it.setToolTip(f"{best.call} on {best.band}, {best.freq_khz:.1f} kHz, spotted "
+                                 f"{best.time_utc:%H%MZ} by {best.spotter} · click to go there")
+            t.setItem(r, self._spot_col, sp_it)
             for c, col in enumerate(cols, start=1):
                 st = row.cells[col]
                 it = QTableWidgetItem()
@@ -140,16 +152,28 @@ class NeededPane(QWidget):
                     it.setForeground(QBrush(QColor(text_color_for(bg))))
                     if row.spots.get(col):
                         s = row.spots[col][0]
-                        it.setToolTip(f"{s.call} {s.freq_khz:.1f} spotted {s.time_utc:%H%MZ} by {s.spotter}"
-                                      + (f"  (+{len(row.spots[col]) - 1} more)" if len(row.spots[col]) > 1 else ""))
+                        it.setToolTip(f"{s.call} on {s.band}, {s.freq_khz:.1f} spotted {s.time_utc:%H%MZ} by {s.spotter}"
+                                      + (f"  (+{len(row.spots[col]) - 1} more)" if len(row.spots[col]) > 1 else "")
+                                      + " · click to go there")
                 t.setItem(r, c, it)
 
         self.summary_lbl.setText(f"{all_counts['needed_spotted']} spotted now · "
                                  f"{all_counts['needed'] + all_counts['needed_spotted']:,} still needed · "
                                  f"{all_counts['worked'] + all_counts['worked_spotted']} worked")
 
+    @staticmethod
+    def _best_spot(row):
+        """The newest spot for a cell we still need (else none)."""
+        need = [sp for col, sps in row.spots.items() if row.cells.get(col) == "needed_spotted" for sp in sps]
+        return max(need, key=lambda s: s.time_utc) if need else None
+
     def _activate(self, r, c):
         if c == 0 or r >= len(self._rows):
+            return
+        if c == getattr(self, "_spot_col", -1):
+            best = self._best_spot(self._rows[r])
+            if best:
+                self.spotActivated.emit(best)
             return
         spots = self._rows[r].spots.get(self._cols[c - 1])
         if spots:

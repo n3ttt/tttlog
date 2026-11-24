@@ -87,7 +87,13 @@ def need_grid(engine, mdef: dict, qsos: list[QSO], spots: list[Spot]) -> tuple[l
                 spotted.setdefault(key, []).append(s)
 
     rows = []
-    for value, title in universe(engine, mdef, qsos):
+    vals = universe(engine, mdef, qsos)
+    known = {v for v, _t in vals}
+    for key in spotted:                       # spotted values with no fixed list (e.g. CWT calls)
+        v = key[-1]
+        if v not in known:
+            known.add(v); vals.append((v, str(v)))
+    for value, title in vals:
         row = NeedRow(value=value, title=title)
         for col in cols:
             key = (col, value) if per_band else (value,)

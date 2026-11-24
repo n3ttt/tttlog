@@ -22,3 +22,11 @@ points: {type: cqww}
 mults:
   - {type: cq_zone, scope: per_band, label: "Zones"}
   - {type: dxcc, scope: per_band, label: "Countries"}
+
+# Multi-op band changes (cqww.com rules, 2026). Multi-Single: one signal on one band in
+# any 10-minute period, from the first QSO on a band; a second, multiplier-only signal
+# may work new mults on another band, with its own 10-minute clock (it may not CQ).
+# Multi-Two: each transmitter at most 8 band changes per clock hour.
+multi_op:
+  MS: {min_minutes: 10, mult_station: true}
+  M2: {changes_per_hour: 8}
