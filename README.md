@@ -17,7 +17,7 @@ Keyboard-first, with contest rules kept in files, and built so you never lose a 
 - **Help ▸ About tttlog** shows the version and build number (and the git commit when running from source), e.g. `0.1.0a3 build 45`. `tttlog --version` prints it too. The build number is the number of commits, so it goes up with every change and is the same on Mac, Windows and Linux; download names carry it too (`tttlog-0.1.0a3-b45-windows.zip`). The version (0.1.0a3) changes only for a release, and that's what the updater compares.
 - tttlog checks GitHub once a day. **Help ▸ Check for updates…** checks right away.
   - **Mac app:** **Update now** downloads the new DMG, replaces the app, and reopens it.
-  - **From source (git clone):** does `git pull` + reinstall, then offers to restart.
+  - **From source (git clone):** checks GitHub for new changes every time tttlog starts (and hourly while it runs), lists them, and **Update now** pulls them in, reinstalls, and restarts tttlog by itself. No Terminal needed.
   - **Windows / Linux:** downloads the new build to Downloads.
 
 ### Making a release

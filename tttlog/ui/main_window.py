@@ -2137,8 +2137,10 @@ class MainWindow(QMainWindow):
         threading.Thread(target=work, daemon=True).start()
 
     def auto_update_check(self):
-        """Quiet check at most once a day; only speaks up if there's something new."""
-        if time.time() - float(self.settings.value("last_update_check", 0) or 0) < 86400:
+        """Quiet check; only speaks up if there's something new. Running from a git
+        clone: every start (and then daily), since new code lands often. Otherwise daily."""
+        every = 3600 if updater.install_kind() == "git" else 86400
+        if time.time() - float(self.settings.value("last_update_check", 0) or 0) < every:
             return
         self.settings.setValue("last_update_check", time.time())
         self.check_updates(quiet=True)
@@ -2150,14 +2152,19 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Check for updates",
                                         f"Couldn't reach GitHub: {rel or 'no releases yet'}")
                 return
-            if not updater.is_newer(rel.version):
+            new = rel.changes > 0 if rel.changes >= 0 else updater.is_newer(rel.version)
+            if not new:
                 if not quiet:
                     QMessageBox.information(self, "Check for updates",
                                             f"You're up to date: tttlog {updater.display_version()}.")
                 return
             box = QMessageBox(self)
             box.setWindowTitle("Update available")
-            box.setText(f"<b>tttlog {rel.version}</b> is available. You have {updater.display_version()}.")
+            if rel.changes > 0:
+                box.setText(f"<b>{rel.changes} new change{'s' if rel.changes != 1 else ''}</b> on GitHub. "
+                            f"Update now and restart tttlog?")
+            else:
+                box.setText(f"<b>tttlog {rel.version}</b> is available. You have {updater.display_version()}.")
             notes = rel.notes.strip()
             box.setInformativeText(notes[:900] + ("…" if len(notes) > 900 else ""))
             go = box.addButton("Update now", QMessageBox.AcceptRole)
@@ -2165,7 +2172,7 @@ class MainWindow(QMainWindow):
             box.exec()
             if box.clickedButton() is go:
                 self.install_update(rel)
-        self._bg(updater.fetch_latest, done)
+        self._bg(updater.fetch_git_changes if updater.install_kind() == "git" else updater.fetch_latest, done)
 
     def install_update(self, rel):
         kind = updater.install_kind()
@@ -2178,11 +2185,9 @@ class MainWindow(QMainWindow):
                     self.banner("")
                     QMessageBox.warning(self, "Update failed", out[-1500:])
                     return
-                self.banner("Update installed")
-                if QMessageBox.question(self, "Updated", "Update installed. Restart tttlog now?") \
-                        == QMessageBox.Yes:
-                    updater.restart_from_source()
-                    self.close()
+                self.banner("Update installed: restarting")
+                updater.restart_from_source()            # you said Update now: go straight on
+                self.close()
             self._bg(updater.update_git_checkout, pulled)
             return
         if not rel.asset_url:                    # no build for this computer: open the page

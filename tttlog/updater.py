@@ -100,6 +100,7 @@ class Release:
     url: str                   # release web page
     asset_url: str | None      # download for this computer
     asset_name: str | None
+    changes: int = -1          # running from git: new commits on GitHub (-1 = a release check)
 
 
 def _sysctl(name: str) -> str:
@@ -188,6 +189,26 @@ def install_kind() -> str:
     return "download"
 
 
+def _git(*args, timeout: float = 30) -> str:
+    return subprocess.check_output(["git", "-C", str(SOURCE_ROOT), *args], text=True,
+                                   stderr=subprocess.STDOUT, timeout=timeout).strip()
+
+
+def fetch_git_changes(timeout: float = 30) -> Release:
+    """Running from a git clone: are there new commits on GitHub for this branch?
+    Release.changes is how many (0 = up to date); notes list them, newest first."""
+    branch = _git("rev-parse", "--abbrev-ref", "HEAD") or "main"
+    if branch == "HEAD":                          # detached: compare with main
+        branch = "main"
+    _git("fetch", "-q", "origin", branch, timeout=timeout)
+    n = int(_git("rev-list", "--count", f"HEAD..origin/{branch}") or 0)
+    notes = _git("log", "--format=• %s", "-n", "15", f"HEAD..origin/{branch}") if n else ""
+    if n > 15:
+        notes += f"\n… and {n - 15} more"
+    return Release(version=__version__, notes=notes, url=f"https://github.com/{REPO}/commits/{branch}",
+                   asset_url=None, asset_name=None, changes=n)
+
+
 def update_git_checkout() -> str:
     """git pull + reinstall. Returns the output; raises CalledProcessError on failure."""
     out = subprocess.check_output(["git", "-C", str(SOURCE_ROOT), "pull", "--ff-only"],
@@ -236,4 +257,9 @@ def reveal(path: Path) -> None:
 
 
 def restart_from_source() -> None:
-    subprocess.Popen([sys.executable, "-m", "tttlog"], start_new_session=True)
+    """Start tttlog again a moment after this one has closed (so the radio's port,
+    the network ports and the log are free)."""
+    code = ("import runpy, sys, time; time.sleep(2); sys.argv = ['tttlog']; "
+            "runpy.run_module('tttlog', run_name='__main__')")
+    subprocess.Popen([sys.executable, "-c", code], cwd=str(SOURCE_ROOT or Path.cwd()),
+                     start_new_session=True)
