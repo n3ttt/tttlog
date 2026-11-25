@@ -442,7 +442,12 @@ class RadioDialog(QDialog):
         f.addRow("Connection", self.conn)
         f.addRow("Host", self.host)
         f.addRow("TCP port", self.port)
-        f.addRow("Serial port", self.serial)
+        self.serial_refresh = QPushButton("⟳")
+        self.serial_refresh.setToolTip("Look for serial ports again (after plugging in the radio's USB)")
+        self.serial_refresh.setFixedWidth(34)
+        self.serial_refresh.clicked.connect(self._refresh_serial_ports)
+        serial_row = QHBoxLayout(); serial_row.addWidget(self.serial, 1); serial_row.addWidget(self.serial_refresh)
+        f.addRow("Serial port", serial_row)
         f.addRow("Baud", self.baud)
         f.addRow(self.control)
         f.addRow(note)
@@ -450,6 +455,21 @@ class RadioDialog(QDialog):
         self.conn.currentIndexChanged.connect(self._sync)
         self.dialect.currentIndexChanged.connect(self._sync)
         self._sync()
+
+    def _refresh_serial_ports(self):
+        keep = self.serial.currentData() or self.serial.currentText().split("  ")[0]
+        self.serial.clear()
+        try:
+            from PySide6.QtSerialPort import QSerialPortInfo
+            for info in QSerialPortInfo.availablePorts():
+                self.serial.addItem(f"{info.portName()}  {info.description()}".strip(), info.portName())
+        except ImportError:
+            pass
+        i = self.serial.findData(keep)
+        if i >= 0:
+            self.serial.setCurrentIndex(i)
+        elif keep:
+            self.serial.setEditText(keep)
 
     def _model_changed(self):
         from ..core.civ import MODELS

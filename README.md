@@ -97,6 +97,7 @@ Every part of the window (Bands, Entry, Log, Spots, Telnet, Score, Check Partial
 
 - **Move:** drag a pane by its title bar. It follows the mouse, a dashed box shows where it will snap, and any pane it would overlap slides down out of the way as you go. Drag it back and they slide back. Nothing else ever moves.
 - **Resize:** drag the grip in the bottom-right corner. It snaps to the grid and pushes panes the same way.
+- **The Entry pane fits itself to its size.** Wide: Call, RST and exchange on one line, F-keys 6×2. Narrower: the exchange goes under the call and the F-keys go 4×3, then 3×4, then 2×6; the top line (frequency, beam, clock, score) and the banner wrap onto more lines instead of being cut off. A big Entry pane gets bigger entry text (up to 28 pt), and the needed-mults list under the F-keys takes any spare height. Typing never moves anything: the beam heading has its space kept, and a long one ends in … (hover for all of it).
 - **–** rolls the pane up to its title bar (nothing else moves); **+** unrolls it.
 - **⧉** pops it out into its own window, with the normal minimize, zoom, and close buttons. **⇲** (or double-clicking the title bar) puts it back exactly where it was, bumping anything now in that spot. Or drag it by tttlog's title strip (the bar with ⇲, not the system title bar) and drop it on the grid where you want it; dropped off the window, it stays popped out.
 - **×** closes it. Reopen it from the View menu; it comes back where it was.
@@ -227,6 +228,8 @@ Config ▸ Radio… connects to the radio:
 - **Kenwood / Elecraft** (Kenwood command set), over the network or a serial/USB port.
 - **Yaesu** FTDX10 / FTDX101 / FT-710 / FT-991A over the radio's USB (Enhanced COM) port at its CAT RATE.
 - **Icom** (CI-V) over the radio's USB port or a CI-V interface: IC-7300, IC-7300MK2, IC-7610, IC-7760, IC-7851, IC-9700, IC-705, IC-905, IC-7100, IC-7600, IC-7700, IC-7410, IC-7200, IC-756PROII/III, IC-7000, IC-746PRO, IC-718, or *Other Icom* with its address. Pick the model; the CI-V address fills in with the model's default (IC-7300 94h, IC-7610 98h, IC-9700 A2h, IC-705 A4h...), or type the address set on the radio. Network: a raw CI-V TCP bridge (wfview's or ser2net's), not Icom's own LAN/RS-BA1 protocol.
+
+**Radio refresh:** the **⟳** next to **● Radio** in the Entry pane (or Operating ▸ Reconnect radio, **Ctrl+Alt+R**) drops the radio connection, opens it again, and reads frequency and mode. Use it after the radio was switched off or its USB unplugged. In Config ▸ Radio, the **⟳** next to Serial port looks for ports again, for a radio plugged in after the dialog opened.
 
 **Icom setup on the radio** (IC-7300: Menu ▸ Set ▸ Connectors ▸ CI-V): **CI-V Baud Rate** the same as tttlog's (19200 is safe; *Auto* follows tttlog), **CI-V Address** = what tttlog shows, **CI-V Transceive ON** (the radio then reports dial turns at once), **CI-V USB Echo Back OFF** (on is OK too: tttlog ignores its own echoed commands). Several radios can share one CI-V bus: tttlog only listens to the address you set. Older radios that don't know the data-mode command (DATA on/off) are detected and asked only for frequency and mode. Tried on an IC-705 over USB (port A, `cu.usbmodem…1` on a Mac; the IC-705 has no USB baud setting). `python scripts/civ_probe.py` finds the radio's port, address, and model, without transmitting.
 

@@ -8,14 +8,15 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRect, QSettings, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QRect, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
-                               QSizePolicy, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget)
+                               QSizePolicy, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from .. import config
+from .widgets import ElidedLabel, FlowLayout
 from ..contests.engine import ContestEngine, load_rules
 from ..core.cluster import (CLUSTER_KINDS, Home, describe_filter, detect_cluster_kind, filter_commands,
                             parse_spot, spot_command)
@@ -84,6 +85,18 @@ QLabel#banner { font: 12pt; padding: 3px; }
 QLineEdit { font: 16pt "Menlo", "Consolas", monospace; padding: 2px; }
 QPushButton { min-width: 78px; }
 """
+
+
+class _FluidBox(QWidget):
+    """A widget that says when it's resized (the Entry pane uses it to reflow)."""
+    resized = Signal(int, int)
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        self.resized.emit(ev.size().width(), ev.size().height())
+
+    def minimumSizeHint(self):
+        return QSize(160, 80)                    # reflow before the pane has to scroll
 
 
 class _Bridge(QObject):
@@ -181,17 +194,24 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
-        w = QWidget()
+        w = _FluidBox()                           # the Entry pane: its contents reflow to its size
+        w.resized.connect(self._reflow_entry)
+        self._entry_box = w
         v = QVBoxLayout(w)
 
-        top = QHBoxLayout()
+        top = FlowLayout(hspacing=10)             # wraps onto a second line when narrow
         self.radio_lbl = QLabel(objectName="radio")
         self.clock_lbl = QLabel()
         self.score_lbl = QLabel("Score 0", objectName="score")
-        for lbl in (self.radio_lbl, self.score_lbl):          # wrap rather than widen the window
+        for lbl in (self.radio_lbl, self.score_lbl):          # wrap when the pane is narrower
             lbl.setWordWrap(True)
         self.wsjtx_lbl = QLabel(visible=False)
         self.rig_lbl = QLabel(visible=False)
+        self.rig_refresh_btn = QToolButton(text="⟳", visible=False)
+        self.rig_refresh_btn.setFocusPolicy(Qt.NoFocus)
+        self.rig_refresh_btn.setAutoRaise(True)
+        self.rig_refresh_btn.setToolTip("Reconnect to the radio and read it again (Ctrl+Alt+R)")
+        self.rig_refresh_btn.clicked.connect(lambda: (self.refresh_radio(), self.call.setFocus()))
         # Mode dropdown (shown when the log allows more than one mode, e.g. the General log)
         self.mode_box = QComboBox()
         self.mode_box.setFocusPolicy(Qt.NoFocus)             # typing stays in the entry line
@@ -207,30 +227,31 @@ class MainWindow(QMainWindow):
         self.run_btn.clicked.connect(lambda: (self.toggle_run(), self.call.setFocus()))
         top.addWidget(self.run_btn)
         top.addWidget(self.radio_lbl)
-        self.beam_lbl = QLabel()
-        self.beam_lbl.setToolTip("Beam heading to the station in the entry line (Alt+J turns the rotor)")
+        self.beam_lbl = ElidedLabel()                 # one line; '…' when narrow, full text on hover
+        self.beam_lbl.setProperty("baseTip", "Beam heading to the station in the entry line (Alt+J turns the rotor)")
+        self.beam_lbl.setToolTip(self.beam_lbl.property("baseTip"))
+        # room for a typical heading up front, so it appearing doesn't reflow the line
+        self.beam_lbl.setMinimumWidth(min(220, self.beam_lbl.fontMetrics().horizontalAdvance("Beam 333° (LP 153°) · 10,926 km")))
         top.addWidget(self.beam_lbl)
         self.bandrule_lbl = QLabel()                  # multi-op: where the band-change rule stands
         self.bandrule_lbl.setStyleSheet("padding: 0 4px; border-radius: 3px;")
         top.addWidget(self.bandrule_lbl)
-        top.addStretch(); top.addWidget(self.rig_lbl); top.addWidget(self.wsjtx_lbl)
+        top.addWidget(self.rig_lbl); top.addWidget(self.rig_refresh_btn); top.addWidget(self.wsjtx_lbl)
         top.addWidget(self.clock_lbl)
-        top.addStretch(); top.addWidget(self.score_lbl)
+        top.addWidget(self.score_lbl)
         v.addLayout(top)
 
-        ent = QGridLayout()
+        ent = self._ent_grid = QGridLayout()
         self.call = QLineEdit(placeholderText="CALL or kHz")
         self.call.setToolTip("Type a call, or a frequency in kHz + Enter to QSY")
         self.rst = QLineEdit("59"); self.rst.setMaximumWidth(70)
         self.exch = QLineEdit(placeholderText="EXCH")
         self.sent_lbl = QLabel()
         self.rst_lbl = QLabel("RST")
-        for c, (lbl, wid) in enumerate([(QLabel("Call"), self.call), (self.rst_lbl, self.rst),
-                                        (QLabel("Rcvd"), self.exch)]):
-            ent.addWidget(lbl, 0, c)
-            ent.addWidget(wid, 1, c)
-        ent.addWidget(self.sent_lbl, 1, 3)
-        ent.setColumnStretch(0, 3); ent.setColumnStretch(2, 2)
+        self.call_lbl, self.exch_lbl = QLabel("Call"), QLabel("Rcvd")
+        self._entry_shape = None
+        self._entry_pt = 16
+        self._place_entry_fields("wide")
         v.addLayout(ent)
         for e in (self.call, self.rst, self.exch):
             e.returnPressed.connect(self.on_enter)
@@ -240,9 +261,11 @@ class MainWindow(QMainWindow):
         self.exch.installEventFilter(self)
 
         self.banner_lbl = QLabel(objectName="banner")
+        self.banner_lbl.setWordWrap(True)             # a narrow pane gets two lines, not a cut-off one
         v.addWidget(self.banner_lbl)
 
-        fk = QGridLayout()
+        fk = self._fk_grid = QGridLayout()
+        self._fk_cols = 6
         self.fbuttons = []
         for i in range(12):
             b = QPushButton()
@@ -263,11 +286,10 @@ class MainWindow(QMainWindow):
         v.addWidget(self.alerts_lbl)
         self.alerts = QListWidget()
         self.alerts.setFocusPolicy(Qt.NoFocus)
-        self.alerts.setMinimumHeight(40)
-        self.alerts.setMaximumHeight(92)
+        self.alerts.setMinimumHeight(40)          # grows into whatever height the pane has spare
         self.alerts.setStyleSheet("QListWidget { font: 10pt 'Menlo', 'Consolas', monospace; }")
         self.alerts.itemClicked.connect(self._on_alert_clicked)
-        v.addWidget(self.alerts)
+        v.addWidget(self.alerts, 1)
         self._alerted: dict[tuple, object] = {}    # (call, band) -> when we said so
         # Every pane, the entry line included, is a tile on a grid (see docks.py).
         v.setContentsMargins(8, 4, 8, 4)
@@ -434,6 +456,7 @@ class MainWindow(QMainWindow):
                                             lambda: self.turn_rotor(long_path=True)))
         rot.addAction(self._shortcut_action("rotor_stop", "Stop the rotor", self.stop_rotor))
         op.addAction(QAction("Set frequency…", self, shortcut="Ctrl+F", triggered=self.ask_freq))
+        op.addAction(QAction("Reconnect radio", self, shortcut="Ctrl+Alt+R", triggered=self.refresh_radio))
         op.addAction(QAction("Operator on (OPON)…", self, shortcut="Ctrl+Shift+O",
                              triggered=lambda: self.opon()))
         op.addAction(QAction("Operator's license class…", self, triggered=self.ask_license_class))
@@ -912,6 +935,59 @@ class MainWindow(QMainWindow):
         self.keyer_cfg["wpm"] = wpm
         config.save_keyer(self.keyer_cfg)
         self.tx_lbl.setText(f"CW speed {wpm} wpm")
+
+    # -- Entry pane: contents reflow to the pane's size --------------------------
+    def _place_entry_fields(self, shape: str):
+        """wide: Call | RST | Rcvd | sent, one row.   medium: Call on its own row,
+        RST | Rcvd | sent under it.   narrow: Call / RST | Rcvd / sent, stacked."""
+        if shape == self._entry_shape:
+            return
+        self._entry_shape = shape
+        g = self._ent_grid
+        for wdg in (self.call_lbl, self.call, self.rst_lbl, self.rst, self.exch_lbl, self.exch, self.sent_lbl):
+            g.removeWidget(wdg)
+        for c in range(4):
+            g.setColumnStretch(c, 0)
+        if shape == "wide":
+            for c, (lbl, wid) in enumerate([(self.call_lbl, self.call), (self.rst_lbl, self.rst),
+                                            (self.exch_lbl, self.exch)]):
+                g.addWidget(lbl, 0, c); g.addWidget(wid, 1, c)
+            g.addWidget(self.sent_lbl, 1, 3)
+            g.setColumnStretch(0, 3); g.setColumnStretch(2, 2)
+        elif shape == "medium":
+            g.addWidget(self.call_lbl, 0, 0, 1, 3); g.addWidget(self.call, 1, 0, 1, 3)
+            g.addWidget(self.rst_lbl, 2, 0); g.addWidget(self.rst, 3, 0)
+            g.addWidget(self.exch_lbl, 2, 1); g.addWidget(self.exch, 3, 1)
+            g.addWidget(self.sent_lbl, 3, 2)
+            g.setColumnStretch(1, 1)
+        else:
+            g.addWidget(self.call_lbl, 0, 0, 1, 2); g.addWidget(self.call, 1, 0, 1, 2)
+            g.addWidget(self.rst_lbl, 2, 0); g.addWidget(self.exch_lbl, 2, 1)
+            g.addWidget(self.rst, 3, 0); g.addWidget(self.exch, 3, 1)
+            g.addWidget(self.sent_lbl, 4, 0, 1, 2)
+            g.setColumnStretch(1, 1)
+
+    def _place_fkeys(self, cols: int):
+        if cols == self._fk_cols:
+            return
+        self._fk_cols = cols
+        for b in self.fbuttons:
+            self._fk_grid.removeWidget(b)
+        for i, b in enumerate(self.fbuttons):
+            self._fk_grid.addWidget(b, i // cols, i % cols)
+
+    def _reflow_entry(self, width: int, height: int):
+        """Called whenever the Entry pane changes size."""
+        self._place_entry_fields("wide" if width >= 540 else "medium" if width >= 330 else "narrow")
+        self._place_fkeys(6 if width >= 540 else 4 if width >= 380 else 3 if width >= 250 else 2)
+        # Entry text: 16 pt normally, bigger on a big pane (never smaller: a narrow pane
+        # stacks the boxes instead). Steps of 2 pt, so it doesn't flicker while dragging.
+        pt = int(max(16, min(28, 16 * min(width / 620, height / 300))) // 2 * 2)
+        if pt != getattr(self, "_entry_pt", 16):
+            self._entry_pt = pt
+            for e in (self.call, self.rst, self.exch):
+                e.setStyleSheet(f"QLineEdit {{ font-size: {pt}pt; }}")
+            self.rst.setMaximumWidth(int(70 * pt / 16))
 
     def _keyer_problem(self, why: str):
         self._last_keyer_problem = why
@@ -1895,8 +1971,19 @@ class MainWindow(QMainWindow):
         if m and m != self.mode:
             self.set_mode(m, from_rig=True)
 
+    def refresh_radio(self):
+        """Drop the radio connection and open it again, then read frequency and mode
+        (after the radio was switched off, its USB unplugged, or it stopped answering)."""
+        if not self.rig_cfg.get("enabled"):
+            self.banner("The radio isn't set up: Config ▸ Radio", "#ffd166")
+            return
+        self.rig.stop()
+        self.rig.start(self.rig_cfg)
+        self.banner("Reconnecting to the radio…")
+
     def _on_rig_state(self, text: str):
         self.rig_lbl.setVisible(text != "off")
+        self.rig_refresh_btn.setVisible(text != "off")
         ok = text.startswith("connected to")
         self.rig_lbl.setText(("● " if ok else "○ ") + "Radio" + ("" if self.rig.control or not ok else " (follow)"))
         self.rig_lbl.setStyleSheet(f"color: {'#2a9d4b' if ok else '#c77d00'}; font-weight: bold;")
