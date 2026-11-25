@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from ..core import locations
+from ..core import dxcc as dxcc_table
 from ..core.cty import CtyDat
 from ..core.models import QSO, mode_group
 
@@ -234,9 +235,21 @@ class ContestEngine:
         return False
 
     # ---- per-QSO scoring --------------------------------------------------
+    def entity_of(self, q: QSO):
+        """(entity, CQ zone) for a QSO. A DXCC number from LoTW / an ADIF file wins over
+        cty.dat, which forgets old DXpedition calls (K8K, N5J, 3Y0J ...)."""
+        hit = self.cty.lookup(q.call)
+        if q.dxcc and q.dxcc in dxcc_table.NAME:
+            ent = self.cty.by_name(dxcc_table.NAME[q.dxcc])
+            if ent is not None:
+                same = hit and dxcc_table.WAE.get(hit[0].name, hit[0].name) == ent.name
+                if not same:
+                    return ent, ent.cq_zone
+        return hit
+
     def annotate(self, q: QSO, prior: list[QSO]) -> QSO:
         """Fill country/zone/points/is_dupe on q given the QSOs logged before it."""
-        hit = self.cty.lookup(q.call)
+        hit = self.entity_of(q)
         ent = hit[0] if hit else None
         q.country = ent.name if ent else "?"
         vals = self.parse_rcvd(q.exch_rcvd)
@@ -303,7 +316,7 @@ class ContestEngine:
         for m in self.rules.get("mults", []):
             hit = None
             if m.get("continent") or m.get("only_entities") or m.get("exclude_entities"):
-                hit = self.cty.lookup(q.call)
+                hit = self.entity_of(q)
                 ent = hit[0] if hit else None
                 if ent is None:
                     continue
@@ -315,6 +328,8 @@ class ContestEngine:
                     continue
             if m["type"] == "dxcc":
                 v = q.country
+                if not m.get("wae"):                     # Sicily, Shetland ... are Italy, Scotland for DXCC
+                    v = dxcc_table.WAE.get(v, v)
             elif m["type"] == "cq_zone":
                 v = q.cq_zone
             elif m["type"] == "call":                    # e.g. CWT: each call once

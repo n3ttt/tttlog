@@ -27,7 +27,7 @@ from ..core.models import QSO, band_from_khz, band_start_khz, mode_group, utc_no
 from ..core.netsync import LogSync
 from ..core import privileges
 from ..core.rig import from_logger_mode, to_logger_mode
-from ..export.adif import export_adif, filter_import, import_adif, parse_adif
+from ..export.adif import export_adif, filter_import, import_adif, parse_adif, repair
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
 from .dialogs import (ClusterButtonsDialog, ClusterDialog, EditQsoDialog, FKeyDialog, KeyerDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
@@ -1648,10 +1648,17 @@ class MainWindow(QMainWindow):
         self.settings.setValue("import_skip_dupes", "true" if skip_dupes else "false")
         for q in found:
             q.contest_id = self.engine.rules["id"]
-        keep, n_same, n_dupe = filter_import(found, self.qsos, self.engine, skip_same, skip_dupes)
+        keep, n_same, n_dupe, repairs = filter_import(found, self.qsos, self.engine, skip_same, skip_dupes)
         with self.sync.bulk():
             for q in keep:
                 self.net.publish(self.sync.local_put(q))
+            n_band = n_dxcc = 0
+            for old, new in repairs:                    # the file knows the band / DXCC entity
+                had_band, had_dxcc = old.band, old.dxcc
+                if repair(old, new):
+                    n_band += had_band is None and old.band is not None
+                    n_dxcc += had_dxcc != old.dxcc
+                    self.net.publish(self.sync.local_put(old))
         self._rescore_and_persist(self.log.all())
         skipped = []
         if n_same:
@@ -1659,6 +1666,8 @@ class MainWindow(QMainWindow):
         if n_dupe:
             skipped.append(f"{n_dupe:,} dupe{'s' if n_dupe != 1 else ''}")
         self.banner(f"Imported {len(keep):,} QSOs from {Path(p).name}"
+                    + (f" · gave {n_band:,} QSOs in the log their band" if n_band else "")
+                    + (f" · set the DXCC entity on {n_dxcc:,} from the file" if n_dxcc else "")
                     + (f" · skipped {', '.join(skipped)}" if skipped else ""))
 
     # ---------------------------------------------------------- DX cluster

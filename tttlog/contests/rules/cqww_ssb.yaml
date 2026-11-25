@@ -22,7 +22,7 @@ points: {type: cqww}
 
 mults:
   - {type: cq_zone, scope: per_band, label: "Zones"}
-  - {type: dxcc, scope: per_band, label: "Countries"}
+  - {type: dxcc, wae: true, scope: per_band, label: "Countries"}
 
 # Multi-op band changes (cqww.com rules, 2026). Multi-Single: one signal on one band in
 # any 10-minute period, from the first QSO on a band; a second, multiplier-only signal

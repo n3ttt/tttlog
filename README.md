@@ -196,6 +196,8 @@ File ▸ New log ▸ **General log** is for everyday QSOs outside contests. It's
 - Bands: 160m–6m plus 2m and 70cm.
 - Export ADIF puts the notes in COMMENT for LoTW / QRZ / Club Log; Cabrillo is only for contests.
 - **File ▸ Import ADIF** asks what to leave out: **Skip QSOs already in this log** (same call, band and mode within 2 minutes; on by default, so importing a file twice, or one that overlaps the log, doesn't double it) and **Skip dupes** (calls already worked under the contest's dupe rule; off by default, so dupes come in marked DUPE as logged). Repeats inside the file count too. The banner says how many came in and how many were skipped. Your choices are remembered.
+- Importing reads each record's **DXCC** entity number (LoTW, QRZ, Club Log all send it) and trusts it over cty.dat, which forgets old DXpedition calls (K8K, N5J, 3Y0J…). Records with only a BAND get put on that band. Re-importing a file fills in the band and DXCC on QSOs already in the log instead of adding copies; LoTW's DXCC report (date only, no time) matches by call, date, band and mode.
+- DXCC counts (general log, ARRL contests) fold the WAE-only countries into their DXCC entity: Sicily is Italy, Shetland is Scotland, European Turkey is Turkey. CQ WW still counts them separately.
 
 ## Local network (multi-op / several computers)
 

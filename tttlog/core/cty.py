@@ -76,6 +76,7 @@ class Entity:
     continent: str
     lat: float
     lon: float
+    wae: bool = False    # * in cty.dat: a CQ (WAE) country that is not a DXCC entity, e.g. Sicily
 
 
 _OVERRIDE = re.compile(r"\((\d+)\)|\[(\d+)\]|<[^>]*>|\{(\w+)\}|~[^~]*~")
@@ -99,7 +100,7 @@ class CtyDat:
                 try:
                     entity = Entity(name=f[0], cq_zone=int(f[1]), itu_zone=int(f[2]),
                                     continent=f[3], lat=float(f[4]), lon=-float(f[5]),
-                                    prefix=f[7].lstrip("*"))
+                                    prefix=f[7].lstrip("*"), wae=f[7].startswith("*"))
                 except (IndexError, ValueError):             # not a cty.dat line: skip it
                     entity = None
                 buf = ""
@@ -128,6 +129,11 @@ class CtyDat:
         if len(data) < 20_000 or "United States" not in text or ";" not in text:
             raise ValueError("downloaded file doesn't look like cty.dat")
 
+    def by_name(self, name: str) -> Entity | None:
+        if not hasattr(self, "_names"):
+            self._names = {e.name: e for e, _ in list(self.prefixes.values()) + list(self.exact.values())}
+        return self._names.get(name)
+
     def entities(self) -> list[Entity]:
         """Every DXCC entity in the file, sorted by primary prefix."""
         seen = {e.name: e for e, _ in list(self.prefixes.values()) + list(self.exact.values())}
@@ -141,6 +147,13 @@ class CtyDat:
         parts = [p for p in call.split("/") if p and p not in _IGNORE_SUFFIXES]
         if not parts:
             return call.split("/")[0]
+        if len(parts) == 2 and any(len(p) == 1 and p.isdigit() for p in parts):
+            # W1AW/8, R2ET/9, OE1RDU/3: a new call area, not a country prefix.
+            # Swap the area digit: W8AW, R9ET (Asiatic Russia), OE3RDU.
+            digit = next(p for p in parts if len(p) == 1 and p.isdigit())
+            base = next(p for p in parts if p is not digit)
+            m = re.match(r"^(.*)(\d)([A-Z]+)$", base)
+            return f"{m.group(1)}{digit}{m.group(3)}" if m else base
         if len(parts) == 1:
             return parts[0]
         # e.g. DL/N3TTT or N3TTT/KH6 -> the shorter piece is the location prefix

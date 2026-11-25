@@ -41,7 +41,8 @@ def test_real_window_reflows(app, win):  # noqa: F811
 
 def test_typing_doesnt_reflow(app, win):  # noqa: F811
     win.show()
-    win._reflow_entry(450, 320); app.processEvents()
+    win._reflow_entry(450, 320)
+    _pump(app, lambda: False, 300)            # let the first layout settle (slow on CI Macs)
     before = (win._entry_shape, win._fk_cols, win._entry_pt, win.call.geometry())
     for ch in "DL1ABC":
         win.call.setText(win.call.text() + ch); win._on_call_edited(win.call.text())

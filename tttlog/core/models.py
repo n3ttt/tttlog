@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 # Band edges in kHz (amateur HF, 6m, 2m, 70cm). Used to derive band from frequency.
 BANDS_KHZ = [
+    ("2200m", 135.7, 137.8),
+    ("630m", 472, 479),
     ("160m", 1800, 2000),
     ("80m", 3500, 4000),
     ("60m", 5330, 5410),
@@ -19,7 +21,11 @@ BANDS_KHZ = [
     ("10m", 28000, 29700),
     ("6m", 50000, 54000),
     ("2m", 144000, 148000),
+    ("1.25m", 222000, 225000),
     ("70cm", 420000, 450000),
+    ("33cm", 902000, 928000),
+    ("23cm", 1240000, 1300000),
+    ("13cm", 2300000, 2450000),
 ]
 
 # Cabrillo mode codes
@@ -90,6 +96,7 @@ class QSO:
     id: int | None = None          # DB row id (local to this computer)
     uid: str = ""                  # same on every networked station; set when first logged
     station_name: str = ""         # which computer logged it (local network), e.g. "RUN1"
+    dxcc: int | None = None        # ADIF DXCC entity number when a file (LoTW) gave one: beats cty.dat
     # filled in by the contest engine
     country: str = ""
     cq_zone: int | None = None

@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS qso (
     exch_sent TEXT, exch_rcvd TEXT,
     station_call TEXT, operator TEXT, contest_id TEXT,
     country TEXT, cq_zone INTEGER, points INTEGER, is_dupe INTEGER,
-    uid TEXT, station_name TEXT
+    uid TEXT, station_name TEXT, dxcc INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_call_band ON qso(call, band);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 FIELDS = ["time_utc", "call", "freq_khz", "band", "mode", "rst_sent", "rst_rcvd",
           "exch_sent", "exch_rcvd", "station_call", "operator", "contest_id",
-          "country", "cq_zone", "points", "is_dupe", "uid", "station_name"]
+          "country", "cq_zone", "points", "is_dupe", "uid", "station_name", "dxcc"]
 
 
 class Log:
@@ -49,9 +49,9 @@ class Log:
     def _migrate(self) -> None:
         """Bring logs made by older versions up to date (adds the network columns)."""
         have = {r[1] for r in self.conn.execute("PRAGMA table_info(qso)")}
-        for col in ("uid", "station_name"):
+        for col, kind in (("uid", "TEXT"), ("station_name", "TEXT"), ("dxcc", "INTEGER")):
             if col not in have:
-                self.conn.execute(f"ALTER TABLE qso ADD COLUMN {col} TEXT")
+                self.conn.execute(f"ALTER TABLE qso ADD COLUMN {col} {kind}")
         for (rid,) in self.conn.execute("SELECT id FROM qso WHERE uid IS NULL OR uid=''").fetchall():
             self.conn.execute("UPDATE qso SET uid=? WHERE id=?", (new_uid(), rid))
         self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_uid ON qso(uid)")
@@ -79,7 +79,7 @@ class Log:
         return [q.time_utc.isoformat(), q.call.upper(), q.freq_khz, q.band, q.mode,
                 q.rst_sent, q.rst_rcvd, q.exch_sent, q.exch_rcvd, q.station_call,
                 q.operator, q.contest_id, q.country, q.cq_zone, q.points, int(q.is_dupe),
-                q.uid, q.station_name]
+                q.uid, q.station_name, q.dxcc]
 
     def add(self, q: QSO) -> QSO:
         if not q.uid:
@@ -123,7 +123,7 @@ class Log:
                    contest_id=r["contest_id"], country=r["country"] or "",
                    cq_zone=r["cq_zone"], points=r["points"] or 0,
                    is_dupe=bool(r["is_dupe"]), uid=r["uid"] or "",
-                   station_name=r["station_name"] or "")
+                   station_name=r["station_name"] or "", dxcc=r["dxcc"])
 
     def set_meta(self, key: str, value: str) -> None:
         self.conn.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, value))

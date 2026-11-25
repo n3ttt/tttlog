@@ -29,17 +29,17 @@ def test_skip_same_qsos():
            q("DL1ABC", 21200, 1),          # other band: new
            q("G4XYZ", 14210, 30),          # same band, 25 min later: a new QSO (contest dupe)
            q("JA1AA", 14220, 40), q("JA1AA", 14220, 40)]    # twice in the file
-    keep, same, dupe = filter_import(new, log, engine(), skip_same=True, skip_dupes=False)
+    keep, same, dupe, _ = filter_import(new, log, engine(), skip_same=True, skip_dupes=False)
     assert [(x.call, x.band) for x in keep] == [("DL1ABC", "15m"), ("G4XYZ", "20m"), ("JA1AA", "20m")]
     assert (same, dupe) == (2, 0)
-    keep, same, dupe = filter_import(new, log, engine(), skip_same=False, skip_dupes=False)
+    keep, same, dupe, _ = filter_import(new, log, engine(), skip_same=False, skip_dupes=False)
     assert len(keep) == 5 and same == dupe == 0                    # both off: everything
 
 
 def test_skip_contest_dupes():
     log = [q("DL1ABC", 14200, 0)]
     new = [q("DL1ABC", 14200, 60), q("DL1ABC", 21200, 61), q("ZS6XX", 7100, 62), q("ZS6XX", 7150, 90)]
-    keep, same, dupe = filter_import(new, log, engine(), skip_same=True, skip_dupes=True)
+    keep, same, dupe, _ = filter_import(new, log, engine(), skip_same=True, skip_dupes=True)
     assert [(x.call, x.band) for x in keep] == [("DL1ABC", "15m"), ("ZS6XX", "40m")]
     assert (same, dupe) == (0, 2)
 
