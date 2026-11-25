@@ -203,7 +203,7 @@ def test_two_windows_share_dupes(app, tmp_path, monkeypatch):
     mult.call.setText("DL1ABC"); mult._live_check("DL1ABC")
     assert "DUPE on 20m (worked by RUN)" in mult.banner_lbl.text()
     assert wait(lambda: mult.network_pane.table.rowCount() == 2)
-    assert mult.log_table.item(0, 8).text() == "RUN"
+    assert mult.log_table.text(0, 8) == "RUN"
     for w in wins:
         w.close()
 

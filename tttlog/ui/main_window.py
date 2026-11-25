@@ -8,12 +8,12 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRect, QSettings, QSize, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QAbstractTableModel, QModelIndex, QObject, QRect, QSettings, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QFileDialog, QFrame, QGridLayout,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
                                QListWidget, QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton, QScrollArea,
-                               QSizePolicy, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
+                               QSizePolicy, QTableView, QTableWidget, QTableWidgetItem, QToolButton, QVBoxLayout, QWidget)
 
 from .. import config
 from .widgets import ElidedLabel, FlowLayout
@@ -102,6 +102,71 @@ class _FluidBox(QWidget):
 class _Bridge(QObject):
     """Brings results from worker threads back to the GUI thread."""
     done = Signal(object, object)          # (callback, result)
+
+
+class LogModel(QAbstractTableModel):
+    """The Log pane's rows, straight from the QSO list (no copy per cell)."""
+    HEADERS = ["Time", "Call", "kHz", "Band", "Snt", "Rcv", "Country", "Pts", "Stn"]
+
+    def __init__(self):
+        super().__init__()
+        self.qsos: list[QSO] = []
+
+    def set_qsos(self, qsos):
+        self.beginResetModel()
+        self.qsos = list(qsos)
+        self.endResetModel()
+
+    def qso(self, row):
+        return self.qsos[row] if 0 <= row < len(self.qsos) else None
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.qsos)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self.HEADERS)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return self.HEADERS[section]
+        return None
+
+    def data(self, index, role=Qt.DisplayRole):
+        if role not in (Qt.DisplayRole, Qt.UserRole) or not index.isValid():
+            return None
+        q = self.qsos[index.row()]
+        if role == Qt.UserRole:
+            return q.id
+        return self.text(q, index.column())
+
+    @staticmethod
+    def text(q, col):
+        if col == 0: return q.time_utc.strftime("%m-%d %H:%M")
+        if col == 1: return q.call
+        if col == 2: return f"{q.freq_khz:.1f}"
+        if col == 3: return q.band or ""
+        if col == 4: return f"{q.rst_sent} {q.exch_sent}"
+        if col == 5: return f"{q.rst_rcvd} {q.exch_rcvd}"
+        if col == 6: return q.country
+        if col == 7: return "DUPE" if q.is_dupe else str(q.points)
+        return q.station_name
+
+
+class LogView(QTableView):
+    def __init__(self):
+        super().__init__()
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(self.fontMetrics().height() + 6)
+        self.horizontalHeader().setStretchLastSection(False)
+
+    def setModel(self, m):
+        super().setModel(m)
+        self.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+
+    def text(self, row, col):
+        return LogModel.text(self.model().qso(row), col)
 
 
 class MainWindow(QMainWindow):
@@ -312,9 +377,9 @@ class MainWindow(QMainWindow):
         self._dock("Entry", w, closable=False)
 
         # Log pane
-        self.log_table = QTableWidget(0, 9)
-        self.log_table.setHorizontalHeaderLabels(["Time", "Call", "kHz", "Band", "Snt", "Rcv", "Country",
-                                                  "Pts", "Stn"])
+        self.log_model = LogModel()
+        self.log_table = LogView()
+        self.log_table.setModel(self.log_model)
         self.log_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.log_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.log_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
@@ -540,6 +605,30 @@ class MainWindow(QMainWindow):
         hlp.addAction(QAction("tttlog on GitHub", self, triggered=lambda: QDesktopServices.openUrl(
             QUrl(f"https://github.com/{updater.REPO}"))))
         hlp.addAction(QAction("About tttlog…", self, triggered=self.show_about))
+        hlp.addSeparator()
+        hlp.addAction(QAction("Open error log folder", self, triggered=self.open_log_folder))
+        hlp.addAction(QAction("Save a problem report…", self, triggered=self.save_problem_report))
+
+    def open_log_folder(self):
+        from .. import diag
+        diag.LOG_DIR.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(diag.LOG_DIR)))
+
+    def save_problem_report(self):
+        from .. import diag
+        from datetime import datetime as _dt
+        name = f"tttlog-problem-{_dt.now():%Y%m%d-%H%M}.zip"
+        path, _ = QFileDialog.getSaveFileName(self, "Save a problem report",
+                                              str(Path.home() / "Downloads" / name), "Zip (*.zip)")
+        if path:
+            diag.problem_report(Path(path))
+            self.banner(f"Saved {Path(path).name}: the error logs and settings (no passwords). "
+                             "Send it with a note of what you were doing.")
+
+    def show_error(self, text: str):
+        """An uncaught error: keep running, say so, point at the log."""
+        self.banner(f"Something went wrong ({text[:120]}). It's in the error log: "
+                         "Help ▸ Open error log folder.")
 
     def _build_mode_menu(self, modes):
         self.mode_menu.clear()
@@ -1383,17 +1472,8 @@ class MainWindow(QMainWindow):
 
     # ---------------------------------------------------------- log pane
     def _refresh_log(self):
-        t = self.log_table
-        t.setRowCount(len(self.qsos))
-        for r, q in enumerate(self.qsos):
-            vals = [q.time_utc.strftime("%m-%d %H:%M"), q.call, f"{q.freq_khz:.1f}", q.band or "",
-                    f"{q.rst_sent} {q.exch_sent}", f"{q.rst_rcvd} {q.exch_rcvd}", q.country,
-                    "DUPE" if q.is_dupe else str(q.points), q.station_name]
-            for c, v in enumerate(vals):
-                it = QTableWidgetItem(v)
-                it.setData(Qt.UserRole, q.id)
-                t.setItem(r, c, it)
-        t.scrollToBottom()
+        self.log_model.set_qsos(self.qsos)        # draws only the rows on screen: fast with 30k QSOs
+        self.log_table.scrollToBottom()
         if self.engine:
             s = self.engine.score(self.qsos)
             if self.engine.is_general:
@@ -1412,8 +1492,7 @@ class MainWindow(QMainWindow):
         rows = self.log_table.selectionModel().selectedRows()
         if not rows:
             return None
-        qid = self.log_table.item(rows[0].row(), 0).data(Qt.UserRole)
-        return next((q for q in self.qsos if q.id == qid), None)
+        return self.log_model.qso(rows[0].row())
 
     def edit_selected(self):
         q = self._selected_qso()

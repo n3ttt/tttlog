@@ -30,18 +30,23 @@ def main() -> int:
         from .updater import display_version
         print(f"tttlog {display_version()}")
         return 0
+    from . import diag
+    diag.setup(debug="--debug" in sys.argv)
     from .updater import running_build
     running_build()                 # remember which build started, before any update lands on disk
     _apply_display_size()
     app = QApplication(sys.argv)
+    diag.start_watchdog()           # a window that stops responding writes down where it's stuck
     app.setApplicationName("tttlog")
     app.setApplicationVersion(__version__)
     app.setDesktopFileName("tttlog")            # Linux: match tttlog.desktop for the taskbar icon
     icon = Path(__file__).parent / "resources" / "tttlog.svg"
     if icon.exists():
         app.setWindowIcon(QIcon(str(icon)))
-    w = MainWindow()
-    w.show()
+    with diag.timed("opening the window", slow_secs=0):
+        w = MainWindow()
+        w.show()
+    diag.on_error(w.show_error)
     if "--smoke-test" in sys.argv:
         # Used by the build: start, check the window came up, quit.
         def check():
@@ -53,7 +58,9 @@ def main() -> int:
             w.close()
             app.exit(0 if ok else 1)
         QTimer.singleShot(1500, check)
-    return app.exec()
+    rc = app.exec()
+    diag.log.info("tttlog closed (%s)", rc)
+    return rc
 
 
 if __name__ == "__main__":

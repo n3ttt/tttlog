@@ -102,13 +102,15 @@ def best_60(qsos: Iterable[QSO]) -> int:
     return best
 
 
-def summary(qsos: Iterable[QSO], now: datetime) -> RateSummary:
-    qsos = list(qsos)
-    return RateSummary(last10=rate_last_n(qsos, 10, now),
-                       last100=rate_last_n(qsos, 100, now),
-                       last60_count=count_since(qsos, 60, now),
-                       last15_count=count_since(qsos, 15, now),
-                       best60=best_60(qsos))
+def summary(qsos: Iterable[QSO], now: datetime, best: bool = True) -> RateSummary:
+    """best=False skips best 60 (the only figure that needs the whole log)."""
+    good = _good(qsos)                       # sort once; the figures below take the sorted list
+    recent = [q for q in good[-2000:] if q.time_utc > now - timedelta(minutes=60)]
+    return RateSummary(last10=rate_last_n(good[-10:], 10, now),
+                       last100=rate_last_n(good[-100:], 100, now),
+                       last60_count=sum(1 for q in recent if q.time_utc <= now),
+                       last15_count=sum(1 for q in recent if now - timedelta(minutes=15) < q.time_utc <= now),
+                       best60=best_60(good) if best else 0)
 
 
 def op_of(q: QSO) -> str:

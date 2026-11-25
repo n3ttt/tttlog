@@ -14,6 +14,9 @@ from ..core import rates
 from ..core.models import QSO
 
 
+HOUR_ROWS = 72                 # hours shown in the hour-by-hour table (a contest is 48)
+
+
 class RatePane(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,6 +61,8 @@ class RatePane(QWidget):
         self._bands: list[str] = []
 
         self._last = ([], None, None, "")
+        self._summary_key = self._hour_key = None
+        self._best60 = 0
 
     def _pick_op(self, op: str) -> None:
         i = self.op_pick.findData(op)
@@ -88,6 +93,20 @@ class RatePane(QWidget):
                 self.op_pick.setItemText(i, op + ("  (you)" if op == me else ""))
 
         bold = QFont(); bold.setBold(True)
+        sel = self.op_pick.currentData() or ""
+        only = (lambda q: rates.op_of(q) == sel) if sel else None
+        mine = [q for q in qsos if only(q)] if only else qsos
+        s = rates.summary(mine, now, best=False)
+        if self._summary_key != (id(qsos), len(qsos), sel):        # best 60 needs the whole log
+            self._summary_key = (id(qsos), len(qsos), sel)
+            self._best60 = rates.best_60(mine)
+        s.best60 = self._best60
+        self.vals["last10"].setText(f"{s.last10:.0f}/hr")
+        self.vals["last100"].setText(f"{s.last100:.0f}/hr")
+        self.vals["last60"].setText(str(s.last60_count))
+        self.vals["last15"].setText(f"{s.last15_count}  ({s.last15_rate}/hr)")
+        self.vals["best60"].setText(str(s.best60))
+
         rows_op = rates.by_operator(qsos, now) if qsos else []
         self.ops.setRowCount(len(rows_op))
         for r, row in enumerate(rows_op):
@@ -100,15 +119,10 @@ class RatePane(QWidget):
                     it.setFont(bold)
                 self.ops.setItem(r, c, it)
 
-        sel = self.op_pick.currentData() or ""
-        only = (lambda q: rates.op_of(q) == sel) if sel else None
-        s = rates.summary([q for q in qsos if only(q)] if only else qsos, now)
-        self.vals["last10"].setText(f"{s.last10:.0f}/hr")
-        self.vals["last100"].setText(f"{s.last100:.0f}/hr")
-        self.vals["last60"].setText(str(s.last60_count))
-        self.vals["last15"].setText(f"{s.last15_count}  ({s.last15_rate}/hr)")
-        self.vals["best60"].setText(str(s.best60))
-
+        key = (id(qsos), len(qsos), id(engine), sel)
+        if key == self._hour_key:          # the clock ticked but the log didn't change
+            return
+        self._hour_key = key
         bands = list(engine.rules["bands"]) if engine else sorted({q.band or "?" for q in qsos})
         if engine:
             rows = rates.hourly(qsos,
@@ -123,7 +137,7 @@ class RatePane(QWidget):
             self.table.setHorizontalHeaderLabels(hdr)
             self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
-        rows = list(reversed(rows))                 # newest hour on top
+        rows = list(reversed(rows))[:HOUR_ROWS]     # newest hour on top; a contest is 48 h
         self.table.setRowCount(len(rows))
         for r, row in enumerate(rows):
             cells = ([row.hour.strftime("%d %H")] +
