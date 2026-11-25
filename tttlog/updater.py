@@ -139,7 +139,7 @@ def platform_asset_suffix() -> str:
     if sys.platform == "darwin":
         return "macos-arm64.dmg" if mac_is_apple_silicon() else "macos-x86_64.dmg"
     if sys.platform.startswith("win"):
-        return "windows.zip"
+        return "windows-setup.exe"
     return "linux-x86_64.tar.gz"
 
 
@@ -194,9 +194,17 @@ def app_bundle() -> Path | None:
     return None
 
 
+def windows_installed() -> bool:
+    """Running from the Windows installer's copy (it leaves unins000.exe next to tttlog.exe)."""
+    return FROZEN and sys.platform.startswith("win") and \
+        (Path(sys.executable).parent / "unins000.exe").exists()
+
+
 def install_kind() -> str:
     if app_bundle():
         return "mac-app"
+    if windows_installed():
+        return "win-installed"
     if IS_GIT_CHECKOUT:
         return "git"
     return "download"
@@ -261,6 +269,18 @@ open {app}
     os.chmod(sh, 0o755)
     subprocess.Popen(["/bin/bash", sh], start_new_session=True,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def run_windows_setup(setup: Path, relaunch: bool = True) -> None:
+    """Start the downloaded installer silently. It waits for / closes this tttlog,
+    updates it in place, and (relaunch) opens the new one."""
+    args = [str(setup), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"]
+    if windows_installed():
+        args.append(f"/DIR={Path(sys.executable).parent}")
+    if relaunch:
+        args.append("/RELAUNCH=1")
+    flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    subprocess.Popen(args, creationflags=flags, close_fds=True)
 
 
 def reveal(path: Path) -> None:

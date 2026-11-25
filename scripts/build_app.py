@@ -59,6 +59,35 @@ def file_version() -> str:
     return f"{version()}-b{build_number()}"
 
 
+def make_ico() -> Path:
+    """tttlog.svg -> packaging/windows/tttlog.ico (16-256 px), for the .exe and the installer."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+    from PySide6.QtGui import QGuiApplication, QImage, QPainter
+    from PySide6.QtSvg import QSvgRenderer
+    app = QGuiApplication.instance() or QGuiApplication([])  # noqa: F841
+    r = QSvgRenderer(str(ROOT / "tttlog" / "resources" / "tttlog.svg"))
+    pngs = []
+    for size in (16, 24, 32, 48, 64, 128, 256):
+        img = QImage(size, size, QImage.Format_ARGB32)
+        img.fill(Qt.transparent)
+        p = QPainter(img); r.render(p); p.end()
+        buf = QByteArray(); b = QBuffer(buf); b.open(QIODevice.WriteOnly)
+        img.save(b, "PNG")
+        pngs.append((size, bytes(buf)))
+    # ICO: header, one directory entry per size, then the PNG images
+    import struct
+    out = struct.pack("<HHH", 0, 1, len(pngs))
+    offset = 6 + 16 * len(pngs)
+    for size, data in pngs:
+        out += struct.pack("<BBBBHHII", size % 256, size % 256, 0, 0, 1, 32, len(data), offset)
+        offset += len(data)
+    out += b"".join(d for _, d in pngs)
+    ico = ROOT / "packaging" / "windows" / "tttlog.ico"
+    ico.write_bytes(out)
+    return ico
+
+
 def main() -> int:
     stamp_build()
     cty = ROOT / "data" / "cty.dat"
@@ -87,6 +116,8 @@ def main() -> int:
            "--exclude-module", "tkinter", "--hidden-import", "tttlog._build"]
     if os.name == "nt" or sys.platform == "darwin":
         cmd.append("--windowed")              # no console window behind the app
+    if os.name == "nt":
+        cmd += ["--icon", str(make_ico())]
     for src, dest in data:
         cmd += ["--add-data", f"{src}{SEP}{dest}"]
     print(" ".join(cmd))

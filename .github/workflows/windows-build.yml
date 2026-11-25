@@ -1,5 +1,6 @@
-# Builds the Windows alpha-test zip: tests on Windows, packages tttlog.exe with
-# PyInstaller, checks the .exe starts, and uploads tttlog-<version>-windows.zip.
+# Builds Windows: tests on Windows, packages tttlog.exe with PyInstaller, checks it starts,
+# then builds and test-installs tttlog-<version>-windows-setup.exe (Inno Setup).
+# Uploads the installer and the no-install zip.
 # Download it from the run's "Artifacts" section on GitHub.
 name: Windows build
 
@@ -81,6 +82,37 @@ jobs:
                -RedirectStandardOutput smoke.txt -RedirectStandardError smoke-err.txt
           Get-Content smoke.txt, smoke-err.txt
           if ($p.ExitCode -ne 0) { throw "tttlog.exe smoke test failed (exit $($p.ExitCode))" }
+
+      - name: Build the installer (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress; }
+          $ver = python -c "import runpy; print(runpy.run_path('tttlog/__init__.py')['__version__'])"
+          $fv = python -c "import sys; sys.path.insert(0, 'scripts'); import build_app; print(build_app.file_version())"
+          & $iscc /Q "/DAppVersion=$ver" "/DFileVersion=$fv" packaging\windows\tttlog.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          Get-ChildItem dist\*-setup.exe
+
+      - name: Check the installer installs a working tttlog
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist\*-setup.exe)[0].FullName
+          $p = Start-Process $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/CURRENTUSER","/NORESTART","/LOG=setup.log" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Get-Content setup.log; throw "installer failed (exit $($p.ExitCode))" }
+          $exe = "$env:LOCALAPPDATA\Programs\tttlog\tttlog.exe"
+          if (-not (Test-Path $exe)) { Get-Content setup.log; throw "not installed at $exe" }
+          $q = Start-Process $exe -ArgumentList "--smoke-test" -Wait -PassThru -RedirectStandardOutput inst.txt
+          Get-Content inst.txt
+          if ($q.ExitCode -ne 0) { throw "installed tttlog.exe failed its smoke test" }
+          if (-not (Test-Path "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\tttlog\tttlog.lnk")) { throw "no Start menu entry" }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          path: dist/tttlog-*-windows-setup.exe
+          retention-days: 30
 
       - name: Upload zip
         uses: actions/upload-artifact@v7

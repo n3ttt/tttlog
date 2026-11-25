@@ -103,3 +103,12 @@ def test_window_offers_restart_when_newer_build_is_on_disk(monkeypatch):
     mw.MainWindow.check_updates(w, quiet=False)
     assert asked and "Build 71 is already downloaded" in asked[0] and "build 70" in asked[0]
     assert restarted == [1] and not infos       # not "You're up to date"
+
+
+def test_windows_picks_the_installer(monkeypatch):
+    from tttlog import updater
+    monkeypatch.setattr(updater.sys, "platform", "win32")
+    rel = updater.pick_latest([{"tag_name": "v0.2.0", "assets": [
+        {"name": "tttlog-0.2.0-b80-windows.zip", "browser_download_url": "zip"},
+        {"name": "tttlog-0.2.0-b80-windows-setup.exe", "browser_download_url": "setup"}]}])
+    assert rel.asset_url == "setup"

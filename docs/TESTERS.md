@@ -8,18 +8,23 @@ Nothing else needs to be installed: no Python, no extra downloads.
 
 1. Install
 ----------
-1. Unzip the file you were sent (right-click it > Extract All...).
-   Put the "tttlog" folder somewhere you'll find it again, such as
-   Documents or the Desktop.
-2. Open the "tttlog" folder and double-click  tttlog.exe
-   (Tip: right-click tttlog.exe > Send to > Desktop (create shortcut).)
+1. Double-click  tttlog-...-windows-setup.exe
+   It installs just for you (no administrator password), adds tttlog to
+   the Start menu, and can put an icon on the desktop.
+2. Start tttlog from the Start menu.
 
 Windows may say "Windows protected your PC". That's because this test
 version isn't signed yet. Click "More info", then "Run anyway".
 You only have to do this once.
 
-To uninstall, delete the tttlog folder. Your logs and settings are kept
-(see "Where your files are" below).
+Updates: Help > Check for updates downloads the new installer, closes
+tttlog, updates it and opens it again.
+
+To uninstall: Settings > Apps > tttlog > Uninstall. Your logs and settings
+are kept (see "Where your files are" below).
+
+No-install version: the  ...-windows.zip  has the same program. Unzip it
+anywhere and double-click tttlog.exe inside the "tttlog" folder.
 
 
 2. First run

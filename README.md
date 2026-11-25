@@ -18,7 +18,8 @@ Keyboard-first, with contest rules kept in files, and built so you never lose a 
 - tttlog checks GitHub once a day. **Help ▸ Check for updates…** checks right away.
   - **Mac app:** **Update now** downloads the new DMG, replaces the app, and reopens it.
   - **From source (git clone):** checks GitHub for new changes every time tttlog starts (and hourly while it runs), lists them, and **Update now** pulls them in, reinstalls, and restarts tttlog by itself. No Terminal needed.
-  - **Windows / Linux:** downloads the new build to Downloads.
+  - **Windows (installed):** downloads the new installer, closes tttlog, updates it in place and reopens it. From the zip, the same step installs it properly.
+  - **Linux:** downloads the new build to Downloads.
 
 ### Making a release
 Bump `__version__` in `tttlog/__init__.py` and commit to `main`. Then on GitHub: **Releases ▸ Draft a new release**, tag `v<version>` (e.g. `v0.1.0a3`), tick **Set as a pre-release** for alphas, and **Publish**.
@@ -46,9 +47,9 @@ Super Check Partial: File ▸ Update Super Check Partial downloads the latest `M
 
 ## Alpha testers (no Python needed)
 
-Every pull request and push to `main` builds a Windows zip on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts ▸ `tttlog-<version>-b<build>-windows.zip`, one zip to extract). Released versions are on the [Releases](https://github.com/n3ttt/tttlog/releases) page.
-Testers unzip it and double-click `tttlog.exe`. The zip includes `README-FIRST.txt` ([docs/TESTERS.md](docs/TESTERS.md)) with first-run steps and how to report bugs.
-To build one yourself on Windows: `pip install pyinstaller`, `python scripts/update_cty.py`, then `python scripts/build_app.py`. The zip lands in `dist/`.
+Every pull request and push to `main` builds Windows on GitHub (Actions ▸ "Windows build" ▸ the run ▸ Artifacts): **`tttlog-<version>-b<build>-windows-setup.exe`** installs it for the current user (no admin), with a Start menu entry, optional desktop icon and an uninstaller in Settings ▸ Apps; `…-windows.zip` is the same program with no install. Logs and settings are never touched by installing, updating or uninstalling. Released versions are on the [Releases](https://github.com/n3ttt/tttlog/releases) page.
+
+To build one yourself on Windows: `pip install pyinstaller`, `python scripts/update_cty.py`, then `python scripts/build_app.py`. The zip lands in `dist/`; for the installer, install [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run `ISCC packaging\windows\tttlog.iss`.
 Linux works the same way (Actions ▸ "Linux build" ▸ Artifacts ▸ `tttlog-<version>-b<build>-linux-x86_64.tar.gz`): a `.tar.gz` with one `tttlog-<version>-x86_64.AppImage` (the whole program in one file) and `install-linux.sh`, which adds it to the applications menu without root. Instructions: [docs/TESTERS-LINUX.md](docs/TESTERS-LINUX.md).
 To build it on Linux: `python scripts/build_app.py`, then `APPIMAGETOOL=/path/to/appimagetool sh scripts/build_appimage.sh`.
 The same `build_app.py` builds a macOS version on a Mac.

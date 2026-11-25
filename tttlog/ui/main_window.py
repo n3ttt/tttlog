@@ -2335,6 +2335,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Update", "tttlog will close, update itself, and reopen.")
                 self.close()
                 QApplication.quit()
+            elif res.name.endswith("-setup.exe"):        # Windows: the installer updates in place
+                if kind != "win-installed":
+                    QMessageBox.information(self, "Update",
+                                            "tttlog will close and install itself (Start menu, desktop "
+                                            "icon, uninstaller). Your logs and settings stay where they are. "
+                                            "You can delete the old unzipped folder afterwards.")
+                updater.run_windows_setup(res)
+                self.close()
+                QApplication.quit()
             else:
                 updater.reveal(res)
                 QMessageBox.information(self, "Update downloaded",
