@@ -152,6 +152,12 @@ class ElidedLabel(QLabel):
     def minimumSizeHint(self):
         return QSize(min(super().minimumSizeHint().width(), 40), super().minimumSizeHint().height())
 
+    def sizeHint(self):
+        """With a minimum width set, ask for just that: longer text elides instead of
+        growing the label and reflowing the line around it."""
+        h = super().sizeHint()
+        return QSize(self.minimumWidth(), h.height()) if self.minimumWidth() else h
+
     def paintEvent(self, ev):
         from PySide6.QtGui import QPainter
         p = QPainter(self)

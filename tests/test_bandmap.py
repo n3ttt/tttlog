@@ -28,7 +28,7 @@ def test_bandmap_shows_the_band(app, win):
     _pump(app, lambda: False, 400)
     assert bm.band == "20m" and bm.radio_khz == 14030.0
     assert [s.call for s in sorted(bm.visible_spots(), key=lambda s: s.freq_khz)] == ["JA1AA", "DL1ABC", "VK2XYZ"]
-    assert "20m · 3 mults" in bm.summary.text()
+    assert _pump(app, lambda: "20m · 3 mults" in bm.summary.text(), 3000), bm.summary.text()   # slow CI Macs
     bm.canvas.repaint()
     calls = [s.call for _r, s in bm.canvas._hits]
     assert calls == ["JA1AA", "DL1ABC", "VK2XYZ"]
