@@ -57,8 +57,12 @@ def test_git_clone_sees_new_commits_and_pulls(tmp_path, monkeypatch):
     git(dev, "push", "-q", "origin", "HEAD:main")
     git(tmp_path, "clone", "-q", str(origin), str(clone))
     monkeypatch.setattr(updater, "SOURCE_ROOT", clone)
+    monkeypatch.setattr(updater, "IS_GIT_CHECKOUT", True)
+    monkeypatch.setattr(updater, "RUNNING_BUILD", None)
+    assert updater.running_build() == "1"                            # tttlog starts on build 1
 
     assert updater.fetch_git_changes().changes == 0                  # up to date
+    assert updater.fetch_git_changes().on_disk == ""
     for msg in ("Icom CW fix", "Entry pane reflows"):
         (dev / "a.txt").write_text(msg); git(dev, "commit", "-qam", msg)
     git(dev, "push", "-q", "origin", "HEAD:main")
@@ -68,6 +72,34 @@ def test_git_clone_sees_new_commits_and_pulls(tmp_path, monkeypatch):
     monkeypatch.setattr(updater.subprocess, "check_output",
                         lambda cmd, **kw: subprocess.run(cmd, capture_output=True, text=True, check=True).stdout
                         if cmd[0] == "git" else "")             # skip the pip reinstall
-    updater.update_git_checkout()
+    updater.update_git_checkout()                                    # pulled while tttlog runs
     assert (clone / "a.txt").read_text() == "Entry pane reflows"
-    assert updater.fetch_git_changes().changes == 0
+    rel = updater.fetch_git_changes()
+    assert rel.changes == 0 and rel.on_disk == "3"                   # nothing new, but restart for build 3
+    assert updater.display_version().endswith("build 1")             # still says what's running
+
+
+def test_window_offers_restart_when_newer_build_is_on_disk(monkeypatch):
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    app = QApplication.instance() or QApplication([])
+    from tttlog import updater
+    import tttlog.ui.main_window as mw
+    asked, infos, restarted = [], [], []
+    monkeypatch.setattr(updater, "install_kind", lambda: "git")
+    monkeypatch.setattr(updater, "RUNNING_BUILD", "70")
+    monkeypatch.setattr(updater, "fetch_git_changes", lambda: updater.Release(
+        version="0.1.0a4", notes="", url="", asset_url=None, asset_name=None, changes=0, on_disk="71"))
+    monkeypatch.setattr(updater, "restart_from_source", lambda: restarted.append(1))
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: (asked.append(a[2]), QMessageBox.Yes)[1]))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: infos.append(a[2])))
+
+    class W:                                    # just what check_updates needs
+        _bridge = None
+        def _bg(self, fn, cb): cb(fn())
+        def close(self): pass
+    w = W()
+    mw.MainWindow.check_updates(w, quiet=False)
+    assert asked and "Build 71 is already downloaded" in asked[0] and "build 70" in asked[0]
+    assert restarted == [1] and not infos       # not "You're up to date"

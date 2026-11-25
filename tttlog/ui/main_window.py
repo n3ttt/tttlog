@@ -2176,6 +2176,15 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "Check for updates",
                                         f"Couldn't reach GitHub: {rel or 'no releases yet'}")
                 return
+            if rel.changes == 0 and rel.on_disk:
+                # already pulled (e.g. while tttlog was open), just not running yet
+                if QMessageBox.question(
+                        self, "Update ready",
+                        f"Build {rel.on_disk} is already downloaded; you're running build "
+                        f"{updater.running_build()}. Restart tttlog now to use it?") == QMessageBox.Yes:
+                    updater.restart_from_source()
+                    self.close()
+                return
             new = rel.changes > 0 if rel.changes >= 0 else updater.is_newer(rel.version)
             if not new:
                 if not quiet:

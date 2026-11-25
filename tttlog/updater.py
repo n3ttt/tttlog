@@ -76,9 +76,21 @@ def build_number() -> str:
         return ""
 
 
+RUNNING_BUILD: str | None = None     # the build this tttlog started as (set on first use)
+
+
+def running_build() -> str:
+    """The build that's running now. From source, the code on disk can move on
+    (git pull while tttlog is open) without the running program changing."""
+    global RUNNING_BUILD
+    if RUNNING_BUILD is None:
+        RUNNING_BUILD = build_number()
+    return RUNNING_BUILD
+
+
 def display_version() -> str:
     """'0.1.0a3 build 57' (the release version, plus the build number when known)."""
-    b = build_number()
+    b = running_build()
     return f"{__version__} build {b}" if b else __version__
 
 
@@ -101,6 +113,7 @@ class Release:
     asset_url: str | None      # download for this computer
     asset_name: str | None
     changes: int = -1          # running from git: new commits on GitHub (-1 = a release check)
+    on_disk: str = ""          # running from git: a newer build already pulled, not running yet
 
 
 def _sysctl(name: str) -> str:
@@ -205,8 +218,11 @@ def fetch_git_changes(timeout: float = 30) -> Release:
     notes = _git("log", "--format=• %s", "-n", "15", f"HEAD..origin/{branch}") if n else ""
     if n > 15:
         notes += f"\n… and {n - 15} more"
+    disk = build_number()
+    newer_on_disk = disk if disk and running_build() and disk.isdigit() and running_build().isdigit() \
+        and int(disk) > int(running_build()) else ""
     return Release(version=__version__, notes=notes, url=f"https://github.com/{REPO}/commits/{branch}",
-                   asset_url=None, asset_name=None, changes=n)
+                   asset_url=None, asset_name=None, changes=n, on_disk=newer_on_disk)
 
 
 def update_git_checkout() -> str:

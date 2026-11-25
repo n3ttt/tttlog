@@ -30,6 +30,8 @@ def main() -> int:
         from .updater import display_version
         print(f"tttlog {display_version()}")
         return 0
+    from .updater import running_build
+    running_build()                 # remember which build started, before any update lands on disk
     _apply_display_size()
     app = QApplication(sys.argv)
     app.setApplicationName("tttlog")
