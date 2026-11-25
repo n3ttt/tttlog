@@ -91,3 +91,45 @@ def parse_adif(text: str, general: bool = False) -> list[QSO]:
             time_utc=when, station_call=fields.get("STATION_CALLSIGN", ""),
             operator=fields.get("OPERATOR", ""), contest_id=fields.get("CONTEST_ID", "")))
     return out
+
+
+SAME_QSO_SECS = 120          # an imported QSO this close in time to one in the log is the same QSO
+
+
+def filter_import(new: list[QSO], existing: list[QSO], engine=None, skip_same: bool = True,
+                  skip_dupes: bool = False) -> tuple[list[QSO], int, int]:
+    """Choose what to import. Returns (to import, skipped as already in the log,
+    skipped as contest dupes). Repeats inside the file count too.
+
+    skip_same:  same call, band and mode within 2 minutes of a QSO already there
+                (re-importing a file, or a file that overlaps the log).
+    skip_dupes: the call was already worked where the contest's dupe rule says it
+                only counts once (e.g. once per band).
+    """
+    from ..core.models import mode_group
+    seen: dict[tuple, list] = {}
+    dupe_keys: set = set()
+
+    def remember(q: QSO):
+        seen.setdefault((q.call.upper(), q.band, mode_group(q.mode)), []).append(q.time_utc)
+        if engine is not None and not q.is_dupe:
+            k = engine._dupe_key(q)
+            if k is not None:
+                dupe_keys.add(k)
+
+    for q in existing:
+        remember(q)
+    keep, n_same, n_dupe = [], 0, 0
+    for q in sorted(new, key=lambda x: x.time_utc):
+        if skip_same and any(abs((q.time_utc - t).total_seconds()) <= SAME_QSO_SECS
+                             for t in seen.get((q.call.upper(), q.band, mode_group(q.mode)), [])):
+            n_same += 1
+            continue
+        if skip_dupes and engine is not None:
+            k = engine._dupe_key(q)
+            if k is not None and k in dupe_keys:
+                n_dupe += 1
+                continue
+        keep.append(q)
+        remember(q)
+    return keep, n_same, n_dupe

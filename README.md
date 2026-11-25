@@ -195,6 +195,7 @@ File ▸ New log ▸ **General log** is for everyday QSOs outside contests. It's
 - Modes: SSB, CW, FT8, FT4, RTTY, AM, FM (Operating ▸ Mode, or type the mode in the call box and press Enter). The RST default follows the mode (59 / 599 / -10).
 - Bands: 160m–6m plus 2m and 70cm.
 - Export ADIF puts the notes in COMMENT for LoTW / QRZ / Club Log; Cabrillo is only for contests.
+- **File ▸ Import ADIF** asks what to leave out: **Skip QSOs already in this log** (same call, band and mode within 2 minutes; on by default, so importing a file twice, or one that overlaps the log, doesn't double it) and **Skip dupes** (calls already worked under the contest's dupe rule; off by default, so dupes come in marked DUPE as logged). Repeats inside the file count too. The banner says how many came in and how many were skipped. Your choices are remembered.
 
 ## Local network (multi-op / several computers)
 

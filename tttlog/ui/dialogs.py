@@ -928,3 +928,24 @@ class CategoryDialog(QDialog):
 
     def values(self) -> tuple[str, str]:
         return self.cat.currentData() or "", self.role.currentData() or ""
+
+
+class ImportDialog(QDialog):
+    """Options for File ▸ Import ADIF: what to leave out."""
+
+    def __init__(self, filename: str, count: int, skip_same: bool, skip_dupes: bool, contest: str,
+                 parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Import ADIF")
+        v = QVBoxLayout(self)
+        v.addWidget(QLabel(f"<b>{filename}</b>: {count:,} QSO{'s' if count != 1 else ''}"))
+        self.same = QCheckBox("Skip QSOs already in this log (same call, band and mode within 2 minutes)")
+        self.same.setChecked(skip_same)
+        self.same.setToolTip("Safe to import the same file twice, or a file that overlaps this log")
+        self.dupes = QCheckBox(f"Skip dupes (calls already worked under the {contest} dupe rule)")
+        self.dupes.setChecked(skip_dupes)
+        self.dupes.setToolTip("Leave out a call worked again where it doesn't count, e.g. twice on one band.\n"
+                              "Off: dupes are imported and marked DUPE (0 points), as logged.")
+        v.addWidget(self.same)
+        v.addWidget(self.dupes)
+        v.addWidget(_buttons(self))

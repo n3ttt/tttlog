@@ -27,7 +27,7 @@ from ..core.models import QSO, band_from_khz, band_start_khz, mode_group, utc_no
 from ..core.netsync import LogSync
 from ..core import privileges
 from ..core.rig import from_logger_mode, to_logger_mode
-from ..export.adif import export_adif, import_adif, parse_adif
+from ..export.adif import export_adif, filter_import, import_adif, parse_adif
 from ..export.cabrillo import export_cabrillo
 from .cluster_pane import ClusterClient, SpotsPane, TelnetPane
 from .dialogs import (ClusterButtonsDialog, ClusterDialog, EditQsoDialog, FKeyDialog, KeyerDialog, MacroDialog, NetworkDialog, NewLogDialog, RadioDialog,
@@ -1631,11 +1631,35 @@ class MainWindow(QMainWindow):
         p, _ = QFileDialog.getOpenFileName(self, "Import ADIF", str(Path.home()), "ADIF (*.adi *.adif)")
         if not p:
             return
+        from .dialogs import ImportDialog
+        try:
+            found = import_adif(p, general=self.engine.is_general)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "Import ADIF", f"Can't read {Path(p).name}: {e}")
+            return
+        dlg = ImportDialog(Path(p).name, len(found),
+                           self.settings.value("import_skip_same", "true") in (True, "true"),
+                           self.settings.value("import_skip_dupes", "false") in (True, "true"),
+                           self.engine.rules.get("name", "contest"), self)
+        if not dlg.exec():
+            return
+        skip_same, skip_dupes = dlg.same.isChecked(), dlg.dupes.isChecked()
+        self.settings.setValue("import_skip_same", "true" if skip_same else "false")
+        self.settings.setValue("import_skip_dupes", "true" if skip_dupes else "false")
+        for q in found:
+            q.contest_id = self.engine.rules["id"]
+        keep, n_same, n_dupe = filter_import(found, self.qsos, self.engine, skip_same, skip_dupes)
         with self.sync.bulk():
-            for q in import_adif(p, general=self.engine.is_general):
-                q.contest_id = self.engine.rules["id"]
+            for q in keep:
                 self.net.publish(self.sync.local_put(q))
         self._rescore_and_persist(self.log.all())
+        skipped = []
+        if n_same:
+            skipped.append(f"{n_same:,} already in the log")
+        if n_dupe:
+            skipped.append(f"{n_dupe:,} dupe{'s' if n_dupe != 1 else ''}")
+        self.banner(f"Imported {len(keep):,} QSOs from {Path(p).name}"
+                    + (f" · skipped {', '.join(skipped)}" if skipped else ""))
 
     # ---------------------------------------------------------- DX cluster
     def cluster_connect(self, on: bool):
